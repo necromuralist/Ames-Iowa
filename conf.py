@@ -222,12 +222,12 @@ THEME_CONFIG = {
 #     )
 
 POSTS = (
-    ("posts/*.rst", "posts", "post.tmpl"),
-    ("posts/*.md", "posts", "post.tmpl"),
-    ("posts/*.txt", "posts", "post.tmpl"),
-    ("posts/*.html", "posts", "post.tmpl"),
-    ("posts/*.ipynb", "posts", "post.tmpl"),
-    ("posts/*.org", "posts", "post.tmpl"),    
+    ("notebooks/*.rst", "notebooks", "post.tmpl"),
+    ("notebooks/*.md", "notebooks", "post.tmpl"),
+    ("notebooks/*.txt", "notebooks", "post.tmpl"),
+    ("notebooks/*.html", "notebooks", "post.tmpl"),
+    ("notebooks/*.ipynb", "notebooks", "post.tmpl"),
+    ("notebooks/*.org", "notebooks", "post.tmpl"),
 )
 PAGES = (
     ("pages/*.rst", "pages", "page.tmpl"),

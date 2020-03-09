@@ -1,0 +1,23 @@
+#+TITLE: Data Constants
+
+#+begin_src python :tangle constants.py
+<<python-imports>>
+
+
+<<raw-data>>
+#+end_src
+* Imports
+** Python
+#+begin_src python :noweb-ref python-imports
+from argparse import Namespace
+#+end_src
+* RawData
+#+begin_src python :noweb-ref raw-data
+RawData = Namespace(
+    environment_variable="TRAINING",
+    target="SalePrice",
+    random_seed=0,
+    train_size=0.8,
+    test_size=0.2,
+)
+#+end_src

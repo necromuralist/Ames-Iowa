@@ -1,0 +1,167 @@
+#+BEGIN_COMMENT
+.. title: Exploring the Housing Data
+.. slug: exploring-the-housing-data
+.. date: 2020-03-07 12:36:03 UTC-07:00
+.. tags: exploration
+.. category: Exploration
+.. link: 
+.. description: Exploring the Ames, Iowa housing data.
+.. type: text
+.. status: 
+.. updated: 
+
+#+END_COMMENT
+#+OPTIONS: ^:{}
+#+TOC: headlines 5
+#+PROPERTY: header-args :session /home/athena/.local/share/jupyter/runtime/kernel-060bce79-c59a-425c-83a3-4198d5a30098.json
+#+BEGIN_SRC python :session kaggle :results none :exports none
+%load_ext autoreload
+%autoreload 2
+#+END_SRC
+* The Ordinary World
+** Imports
+*** Python
+#+begin_src python :results none
+from argparse import Namespace
+from functools import partial
+#+end_src
+*** PyPi
+#+begin_src python :results none
+from sklearn.dummy import DummyRegressor
+from sklearn.metrics import mean_absolute_error
+import holoviews
+import hvplot.pandas
+#+end_src
+*** This Project
+#+begin_src python :results none
+from ames.data.loaders import RawLoader
+#+end_src
+*** Others
+#+begin_src python :results none
+from graeae import EmbedHoloviews
+#+end_src
+** Set Up
+*** The Data
+#+begin_src python :results none
+data = RawLoader()
+#+end_src
+*** Plotting
+#+begin_src python :results none
+SLUG = "exploring-the-housing-data"
+Embed = partial(EmbedHoloviews, folder_path=f"../../files/notebooks/exploratory/{SLUG}")
+Plot = Namespace(
+    width=1000,
+    height=800,
+)
+#+end_src
+* The Call To Adventure
+** [#C] COMMENT An Initial Look at the Data
+#+begin_src python :results output :exports both
+rows, columns = data.X.shape
+print(f"Rows: {rows:,}, Columns: {columns}")
+#+end_src
+
+#+RESULTS:
+: Rows: 1,460, Columns: 80
+#+begin_src python :results output :exports both
+numeric = [column for column in data.X.columns
+           if data.X[column].dtype != "object"]
+categorical = [column for column in data.X.columns if data.X[column].dtype == "object"]
+print(f"Numeric Columns: {len(numeric)}")
+print(f"Categorical Columns: {len(categorical)}")
+#+end_src
+
+#+RESULTS:
+: Numeric Columns: 37
+: Categorical Columns: 43
+
+#+begin_src python :results none
+plot = data.y.hvplot.box().opts(title="Sales Price Distribution",
+                                width=Plot.width,
+                                height=Plot.height)
+source = Embed(plot=plot, file_name="sales_price_distribution")()
+#+end_src
+
+#+begin_src python :results output html :exports both
+print(source)
+#+end_src
+
+#+RESULTS:
+#+begin_export html
+<object type="text/html" data="sales_price_distribution.html" style="width:100%" height=800>
+  <p>Figure Missing</p>
+</object>
+#+end_export
+
+#+begin_src python :results none
+mean_line = holoviews.VLine(data.y.mean(), label="mean")
+median_line = holoviews.VLine(data.y.median(), label="median")
+mode_line = holoviews.VLine(data.y.mode().iloc[0], label="mode")
+plot = (data.y.hvplot.kde() * mean_line * median_line * mode_line).opts(title="Sales Price KDE Distribution",
+                                width=Plot.width,
+                                height=Plot.height)
+source = Embed(plot=plot, file_name="sales_price_kde_distribution")()
+#+end_src
+
+#+begin_src python :results output html :exports both
+print(source)
+#+end_src
+
+#+RESULTS:
+#+begin_export html
+: <object type="text/html" data="sales_price_kde_distribution.html" style="width:100%" height=800>
+:   <p>Figure Missing</p>
+: </object>
+#+end_export
+
+#+begin_src python :results output raw :exports both
+print("|Name | Value|")
+print("|-+-|")
+print(f"|Mean|{data.y.mean():,}|")
+print(f"|Median|{data.y.median():,}|")
+print(f"|Mode|{data.y.mode().iloc[0]:,}|")
+#+end_src
+
+#+RESULTS:
+|Name | Value|
+|-+-|
+|Mean|180,921.19589041095|
+|Median|163,000.0|
+|Mode|140,000|
+
+#+begin_src python :results none
+def dummy(strategy:str="mean", constant=None):
+    if constant is not None:
+        regressor = DummyRegressor(strategy="constant", constant=constant)
+    else:
+        regressor = DummyRegressor(strategy=strategy)
+    regressor.fit(data.x_train, data.y_train)
+    predictions = regressor.predict(data.x_validate)
+    print(f"Mean Absolute Error for {strategy} predictions: {mean_absolute_error(data.y_validate, predictions):,}")
+#+end_src
+** Mean Regressor
+#+begin_src python :results output :exports both
+dummy("mean")
+#+end_src
+
+#+RESULTS:
+Mean Absolute Error for mean predictions: 57,046.67787108275
+
+** Median Regressor
+#+begin_src python :results output :exports both
+dummy("median")
+#+end_src
+
+#+RESULTS:
+Mean Absolute Error for median predictions: 55,555.739726027394
+
+** Mode Regressor
+
+#+begin_src python :results output :exports both
+dummy("mode", constant=data.y.mode().iloc[0])
+#+end_src
+
+#+RESULTS:
+Mean Absolute Error for mode predictions: 58,944.11643835616
+
+* The Return

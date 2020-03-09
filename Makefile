@@ -9,6 +9,7 @@ BUCKET = [OPTIONAL] your-bucket-for-syncing-data (do not include 's3://')
 PROFILE = default
 PROJECT_NAME = ames_housing
 PYTHON_INTERPRETER = python
+ROOT = ames
 
 ifeq (,$(shell which conda))
 HAS_CONDA=False
@@ -27,7 +28,7 @@ requirements: test_environment
 
 ## Make Dataset
 data: requirements
-	$(PYTHON_INTERPRETER) src/data/make_dataset.py data/raw data/processed
+	$(PYTHON_INTERPRETER) $(ROOT)/data/make_dataset.py data/raw data/processed
 
 ## Delete all compiled Python files
 clean:
@@ -36,7 +37,7 @@ clean:
 
 ## Lint using flake8
 lint:
-	flake8 src
+	flake8 $(ROOT)
 
 ## Upload Data to S3
 sync_data_to_s3:

@@ -1,0 +1,41 @@
+#+BEGIN_COMMENT
+.. title: Story Outline
+.. slug: story outline
+.. date: 2020-03-07 12:36:03 UTC-07:00
+.. tags: outline
+.. category: Story
+.. link: 
+.. description: Story Outline
+.. type: text
+.. status: 
+.. updated: 
+
+#+END_COMMENT
+* Main Character
+* Flaw
+* Outcome
+  - changed state
+* External Goal
+  - success or failure
+  - What are the stakes?
+* Antagonist
+* Ally
+* Theme
+* Plot
+** Opening Scene
+** Inciting Event
+** Character realizes external goal
+** Display of flaw
+** Drive for the goal
+** The Antagonist Revealed
+** Thwarted
+** Revisit the Flaw
+** New drive for the goal
+** The Antagonist strikes
+** Thwarted again
+** New Goal
+** The Ally attacks
+** Girding the loins
+** Battle
+** Death
+** Outcome
