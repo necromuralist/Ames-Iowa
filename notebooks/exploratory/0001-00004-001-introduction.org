@@ -1,0 +1,184 @@
+#+BEGIN_COMMENT
+.. title: Introduction to the Kaggle Intermediate Machine Learning Tutorial
+.. slug: introduction-intermediate-machine-learning
+.. date: 2020-02-20 20:59:21 UTC-08:00
+.. tags: kaggle,tutorial
+.. category: Tutorial
+.. link: 
+.. description: The first part of the second kaggle machine learning tutorial.
+.. type: text
+.. status: 
+.. updated: 
+
+#+END_COMMENT
+#+OPTIONS: ^:{}
+#+TOC: headlines 
+#+PROPERTY: header-args :session /run/user/1000/jupyter/kernel-0a2bf70a-3b93-4b6e-98a7-b40dd113d69e.json
+* Beginning
+  This is the introduction to kaggle's intermediate machine learning tutorial.
+** Imports
+*** Python
+#+begin_src python :results none
+from argparse import Namespace
+from datetime import datetime
+from functools import partial
+from pathlib import Path
+#+end_src
+*** PyPi
+#+begin_src python :results none
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_absolute_error
+from sklearn.model_selection import cross_val_score, train_test_split
+
+import hvplot.pandas
+import pandas
+#+end_src
+*** Others
+#+begin_src python :results none
+from graeae import EmbedHoloviews, EnvironmentLoader, Timer
+#+end_src
+** Set Up
+*** Plottting
+#+begin_src python :results none
+SLUG = "introduction-intermediate-machine-learning"
+OUTPUT_PATH = Path("../../files/posts/tutorials/")/SLUG
+Embed = partial(EmbedHoloviews, folder_path=OUTPUT_PATH)
+Plot = Namespace(
+    height=800,
+    width=1000,
+)
+#+end_src
+*** The Timer
+#+begin_src python :results none
+TIMER = Timer()
+#+end_src
+*** Environment
+#+begin_src python :results none
+ENVIRONMENT = EnvironmentLoader()
+#+end_src
+*** The Data
+#+begin_src python :results none
+DATA_PATH = Path(ENVIRONMENT["HOUSE-PRICES-IOWA"]).expanduser()
+training_data = pandas.read_csv(
+    DATA_PATH/"train.csv")
+
+testing_data = pandas.read_csv(
+    DATA_PATH/"test.csv"
+)
+#+end_src
+* Middle
+** Preliminary 1: Specify Prediction Target
+Select the target variable, which corresponds to the sales price. Save this to a new variable called `y`. You'll need to print a list of the columns to find the name of the column you need.
+
+Our target is /SalePrice/.
+
+#+begin_src python :results none
+Y = data.SalePrice
+#+end_src
+** Preliminary 2: Create X
+#+begin_quote
+ Now you will create a DataFrame called `X` holding the predictive features.
+ 
+ Since you want only some columns from the original data, you'll first create a list with the names of the columns you want in `X`.
+ 
+ You'll use just the following columns in the list (you can copy and paste the whole list to save some typing, though you'll still need to add quotes):
+     * LotArea
+     * YearBuilt
+     * 1stFlrSF
+     * 2ndFlrSF
+     * FullBath
+     * BedroomAbvGr
+     * TotRmsAbvGrd
+#+end_quote
+
+#+begin_src python :results none
+Training = Namespace(
+    features = [
+        "1stFlrSF",
+        "2ndFlrSF",
+        "BedroomAbvGr",
+        "FullBath",
+        "LotArea",
+        "TotRmsAbvGrd",
+        "YearBuilt",
+    ],
+    random_seed=0,
+    train_size=0.8,
+    test_size=0.2,
+)
+X = training_data[Training.features]
+x_submit = testing_data[Training.features]
+#+end_src
+
+Split up the data into training and validation sets.
+
+#+begin_src python :results none
+x_train, x_validate, y_train, y_validate = train_test_split(
+    X, Y,
+    random_state=Training.random_seed,
+    train_size=Training.train_size,
+    test_size=Training.test_size)
+#+end_src
+** Preliminary 3: Evaluate Some Models
+#+begin_src python :results none
+hyperparameters = dict(
+    model_1=dict(n_estimators=50, random_state=0),
+    model_2 = dict(n_estimators=100, random_state=0),
+    model_3 = dict(n_estimators=100, criterion='mae', random_state=0),
+    model_4 = dict(n_estimators=200, min_samples_split=20, random_state=0),
+    model_5 = dict(n_estimators=100, max_depth=7, random_state=0),
+    )
+
+models = [RandomForestRegressor(**parameters) for parameters in hyperparameters.values()]
+#+end_src
+
+#+begin_src python :results output :exports both
+def score_model(model, X_t=x_train, X_v=x_validate, y_t=y_train, y_v=y_validate):
+    model.fit(X_t, y_t)
+    preds = model.predict(X_v)
+    return mean_absolute_error(y_v, preds)
+
+scores = sorted([(score_model(model), model, index) for index, model in enumerate(models)])
+
+for score, model, index in scores:
+    print(f"Model {index} MAE: {score:0.2f}")
+
+best = min(scores)
+print()
+print(f"Best Model: {best}")
+best_model = f"model_{best[2]}"
+best_hyperparameters = hyperparameters[best_model]
+#+end_src
+
+#+RESULTS:
+#+begin_example
+Model 2 MAE: 23528.78
+Model 4 MAE: 23706.67
+Model 1 MAE: 23740.98
+Model 3 MAE: 23996.68
+Model 0 MAE: 24015.49
+
+Best Model: (23528.78421232877, RandomForestRegressor(bootstrap=True, criterion='mae', max_depth=None,
+                      max_features='auto', max_leaf_nodes=None,
+                      min_impurity_decrease=0.0, min_impurity_split=None,
+                      min_samples_leaf=1, min_samples_split=2,
+                      min_weight_fraction_leaf=0.0, n_estimators=100,
+                      n_jobs=None, oob_score=False, random_state=0, verbose=0,
+                      warm_start=False), 2)
+#+end_example
+
+** Preliminary 4: Make Some Predictions
+#+begin_src python :results none
+model = RandomForestRegressor(**best_hyperparameters)
+model.fit(X, Y)
+
+test_predictions = model.predict(x_submit)
+
+submission = pandas.DataFrame(dict(Id=testing_data.Id,
+                                   SalePrice=test_predictions))
+submission.to_csv(DATA_PATH/"submission.csv", index=False)
+#+end_src
+
+This gets a score of **20,928.54621** compared to the previous error score of **27,217.91640*, so it looks like the error is getting better.
+* End
+Now we're back at the point we were at the end of the introduction to machine learning tutorial, except with a slightly improved model.

@@ -13,8 +13,8 @@
 #+END_COMMENT
 #+OPTIONS: ^:{}
 #+TOC: headlines 5
-#+PROPERTY: header-args :session /home/athena/.local/share/jupyter/runtime/kernel-060bce79-c59a-425c-83a3-4198d5a30098.json
-#+BEGIN_SRC python :session kaggle :results none :exports none
+#+PROPERTY: header-args :session /home/brunhilde/.local/share/jupyter/runtime/kernel-dfb5af11-1602-4e22-89f1-44997faf720e.json
+#+BEGIN_SRC python :results none :exports none
 %load_ext autoreload
 %autoreload 2
 #+END_SRC
@@ -55,7 +55,7 @@ Plot = Namespace(
 )
 #+end_src
 * The Call To Adventure
-** [#C] COMMENT An Initial Look at the Data
+** An Initial Look at the Data
 #+begin_src python :results output :exports both
 rows, columns = data.X.shape
 print(f"Rows: {rows:,}, Columns: {columns}")
@@ -63,6 +63,7 @@ print(f"Rows: {rows:,}, Columns: {columns}")
 
 #+RESULTS:
 : Rows: 1,460, Columns: 80
+
 #+begin_src python :results output :exports both
 numeric = [column for column in data.X.columns
            if data.X[column].dtype != "object"]
@@ -88,9 +89,9 @@ print(source)
 
 #+RESULTS:
 #+begin_export html
-<object type="text/html" data="sales_price_distribution.html" style="width:100%" height=800>
-  <p>Figure Missing</p>
-</object>
+: <object type="text/html" data="sales_price_distribution.html" style="width:100%" height=800>
+:   <p>Figure Missing</p>
+: </object>
 #+end_export
 
 #+begin_src python :results none

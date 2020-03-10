@@ -1,0 +1,320 @@
+#+BEGIN_COMMENT
+.. title: XGBoost
+.. slug: xgboost
+.. date: 2020-02-20 21:25:25 UTC-08:00
+.. tags: xgboost,tutorial,kaggle
+.. category: Tutorial
+.. link: 
+.. description: Kaggle's tutorial on XGBoost.
+.. type: text
+.. status: 
+.. updated: 
+
+#+END_COMMENT
+#+OPTIONS: ^:{}
+#+TOC: headlines 5
+#+PROPERTY: header-args :session /home/athena/.local/share/jupyter/runtime/kernel-b7763295-d635-4d63-992e-5a9e714ed656.json
+* Beginning
+#+begin_quote
+In this exercise, you will leverage what you've learned to tune a machine learning model with **cross-validation**.
+#+end_quote
+** Imports
+*** Python
+#+begin_src python :results none
+from argparse import Namespace
+from functools import partial
+from pathlib import Path
+
+import random
+#+end_src
+*** PyPi
+#+begin_src python :results none
+from eli5.sklearn import PermutationImportance
+from matplotlib import pyplot
+
+from sklearn.compose import ColumnTransformer
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.experimental import enable_iterative_imputer
+from sklearn.impute import IterativeImputer
+from sklearn.impute import SimpleImputer
+from sklearn.metrics import mean_absolute_error
+from sklearn.model_selection import cross_val_score, train_test_split, RandomizedSearchCV
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder
+
+from xgboost import XGBRegressor
+
+from tabulate import tabulate
+
+import eli5
+import hvplot.pandas
+import numpy
+import pandas
+import shap
+#+end_src
+*** Others
+#+begin_src python :results none
+from graeae import CountPercentage, EmbedHoloviews, EnvironmentLoader, Timer
+#+end_src
+** Set Up
+*** Table
+#+begin_src python :results none
+TABLE = partial(tabulate, tablefmt="orgtbl", showindex=False, headers="keys")
+#+end_src
+*** Plottting
+#+begin_src python :results none
+SLUG = "xgboost"
+OUTPUT_PATH = Path("../../files/posts/tutorials/")/SLUG
+if not OUTPUT_PATH.is_dir():
+    OUTPUT_PATH.mkdir()
+Embed = partial(EmbedHoloviews, folder_path=OUTPUT_PATH)
+Plot = Namespace(
+    height=800,
+    width=1000,
+)
+#+end_src
+*** The Timer
+#+begin_src python :results none
+TIMER = Timer()
+#+end_src
+*** Environment
+#+begin_src python :results none
+ENVIRONMENT = EnvironmentLoader()
+#+end_src
+*** The Data
+#+begin_src python :results none
+DATA_PATH = Path(ENVIRONMENT["HOUSE-PRICES-IOWA"]).expanduser()
+train_data = pandas.read_csv(
+    DATA_PATH/"train.csv", index_col="Id")
+
+test_data = pandas.read_csv(
+    DATA_PATH/"test.csv", index_col="Id"
+)
+X_test = test_data
+#+end_src
+*** Some Constants
+#+begin_src python :results none
+Data = Namespace(
+    target="SalePrice",
+    train_size=0.8,
+    test_size=0.2,
+    random_seed=0,
+)
+#+end_src
+** Setup The Data
+   Split up the target and features.
+#+begin_src python :results none
+assert not train_data[Data.target].hasnans
+y = train_data[Data.target]
+X = train_data.drop([Data.target], axis="columns")
+#+end_src
+
+#+begin_src python :results none
+X_train, X_validate, y_train, y_validate = train_test_split(
+    X, y,
+    train_size=Data.train_size, test_size=Data.test_size,
+    random_state=Data.random_seed)
+#+end_src
+*** Selecting columns
+"Cardinality" means the number of unique values in a column. Select categorical columns with relatively low cardinality (convenient but arbitrary).
+#+begin_src python :results none
+low_cardinality_cols = [
+    cname for cname in X_train.columns if X_train[cname].nunique() < 10 and
+    X_train[cname].dtype == "object"]
+#+end_src
+
+Select numeric columns.
+#+begin_src python :results none
+numeric_columns = [column for column in X_train.columns
+                   if X_train[column].dtype in ['int64', 'float64']]
+#+end_src
+
+Keep selected columns only
+#+begin_src python :results none
+keep_columns = low_cardinality_cols + numeric_columns
+X_train = X_train[keep_columns].copy()
+X_valid = X_validate[keep_columns].copy()
+X_test = X_test[keep_columns].copy()
+#+end_src
+*** One-Hot Encoding
+One-hot encode the data (to shorten the code, we use pandas).
+#+begin_src python :results none
+X_train = pandas.get_dummies(X_train)
+X_validate = pandas.get_dummies(X_validate)
+X_test = pandas.get_dummies(X_test)
+X_train, X_validate = X_train.align(X_validate, join='left', axis=1)
+X_train, X_test = X_train.align(X_test, join='left', axis=1)
+#+end_src
+** Step 1: Build model
+#+begin_quote
+In this step, you'll build and train your first model with gradient boosting.
+
+ - Begin by setting =my_model_1= to an XGBoost model.  Use the [[https://xgboost.readthedocs.io/en/latest/python/python_api.html#xgboost.XGBRegressor][XGBRegressor]] class, and set the random seed to 0 (=random_state=0=).  **Leave all other parameters as default.**
+ - Then, fit the model to the training data in =X_train= and =y_train=.
+#+end_quote
+#+begin_src python :results none
+model = XGBRegressor(random_state=Data.random_seed)
+#+end_src
+
+#+begin_src python :results none
+model.fit(X_train, y_train)
+#+end_src
+
+#+begin_src python :results none
+predictions_1 = model.predict(X_validate)
+#+end_src
+
+#+begin_quote
+Finally, use the =mean_absolute_error()= function to calculate the mean absolute error (MAE) corresponding to the predictions for the validation set.  Recall that the labels for the validation data are stored in =y_valid=.
+#+end_quote
+
+#+begin_src python :results output :exports both
+mae_1 = mean_absolute_error(predictions_1, y_validate)
+print(f"Mean Absolute Error: {mae_1}")
+#+end_src
+
+#+RESULTS:
+: Mean Absolute Error: 17662.736729452055
+
+** Step 2: Improve the model
+#+begin_quote
+Now that you've trained a default model as baseline, it's time to tinker with the parameters, to see if you can get better performance.
+ - Begin by setting =my_model_2= to an XGBoost model, using the [[https://xgboost.readthedocs.io/en/latest/python/python_api.html#xgboost.XGBRegressor][XGBRegressor]] class.  Use what you learned in the previous tutorial to figure out how to change the default parameters (like =n_estimators= and =learning_rate=) to get better results.
+ - Then, fit the model to the training data in =X_train= and =y_train=.
+ - Set =predictions_2= to the model's predictions for the validation data.  Recall that the validation features are stored in =X_valid=.
+ - Finally, use the =mean_absolute_error()= function to calculate the mean absolute error (MAE) corresponding to the predictions on the validation set.  Recall that the labels for the validation data are stored in =y_valid=.
+ #+end_quote
+
+#+begin_src python :results output :exports both
+estimators = list(range(50, 200, 10))
+max_depth = list(range(10, 100, 10)) + [None]
+learning_rate = 0.05 * numpy.array(range(1, 10))
+
+grid = dict(n_estimators=estimators,
+            max_depth=max_depth)
+            #learning_rate=learning_rate)
+
+model = XGBRegressor(random_state=Data.random_seed, learning_rate=0.05)
+search = RandomizedSearchCV(estimator=model,
+                            param_distributions=grid,
+                            n_iter=40,
+                            scoring="neg_mean_absolute_error",
+                            n_jobs=-1,
+                            random_state=1)
+
+X_cv = pandas.concat([X_train, X_validate])
+y_cv = pandas.concat([y_train, y_validate])
+with TIMER:
+    search.fit(X_cv, y_cv)
+first_model = search.best_estimator_
+print(f"CV Training MAE: {-search.best_score_:0.2f}")
+print(search.best_params_)
+#+end_src
+
+#+RESULTS:
+: 2020-03-01 21:34:37,418 graeae.timers.timer start: Started: 2020-03-01 21:34:37.418449
+: 2020-03-01 21:36:24,107 graeae.timers.timer end: Ended: 2020-03-01 21:36:24.107671
+: 2020-03-01 21:36:24,109 graeae.timers.timer end: Elapsed: 0:01:46.689222
+: CV Training MAE: 16048.16
+: {'n_estimators': 160, 'max_depth': None}
+
+#+begin_src python :results output :exports both
+outcome = pandas.DataFrame({"Score": search.cv_results_["mean_test_score"]})
+#+end_src
+
+#+begin_src python :results output :exports both
+early_stopping_model = XGBRegressor(random_state=Data.random_seed,
+                                    learning_rate=0.05,
+                                    early_stopping_rounds=5,
+                                    n_estimators=500)
+early_stopping_model.fit(X_train, y_train, eval_set=[(X_validate, y_validate)],
+                         verbose=False)
+print(mean_absolute_error(early_stopping_model.predict(X_validate),
+                          y_validate))
+#+end_src
+
+#+RESULTS:
+: 16728.27523009418
+
+#+begin_src python :results output :exports both
+params = model.get_params()
+print(f"Trees: {params['n_estimators']}")
+#+end_src
+
+#+RESULTS:
+: Trees: 100
+
+** Step 3: Break the model
+#+begin_quote
+In this step, you will create a model that performs worse than the original model in Step 1.  This will help you to develop your intuition for how to set parameters.  You might even find that you accidentally get better performance, which is ultimately a nice problem to have and a valuable learning experience!
+ - Begin by setting =my_model_3= to an XGBoost model, using the [[https://xgboost.readthedocs.io/en/latest/python/python_api.html#xgboost.XGBRegressor][XGBRegressor]] class.  Use what you learned in the previous tutorial to figure out how to change the default parameters (like =n_estimators= and =learning_rate=) to design a model to get high MAE.
+ - Then, fit the model to the training data in =X_train= and =y_train=.
+ - Set =predictions_3= to the model's predictions for the validation data.  Recall that the validation features are stored in =X_valid=.
+ - Finally, use the =mean_absolute_error()= function to calculate the mean absolute error (MAE) corresponding to the predictions on the validation set.  Recall that the labels for the validation data are stored in =y_valid=.
+
+#+end_quote
+#+begin_src python :results output :exports both
+parameters = random.choice(search.cv_results_["params"])
+print(parameters)
+model = XGBRegressor(random_state=Data.random_seed, **parameters)
+with TIMER:
+    model.fit(X_train, y_train)
+print(f"MAE: {mean_absolute_error(model.predict(X_validate), y_validate)}")
+#+end_src
+
+#+RESULTS:
+: 2020-02-29 20:55:54,573 graeae.timers.timer start: Started: 2020-02-29 20:55:54.573008
+: {'n_estimators': 60, 'max_depth': 20, 'learning_rate': 0.7000000000000001}
+: 2020-02-29 20:55:55,019 graeae.timers.timer end: Ended: 2020-02-29 20:55:55.019335
+: 2020-02-29 20:55:55,020 graeae.timers.timer end: Elapsed: 0:00:00.446327
+: MAE: 25077.38005672089
+** Numeric Values Only
+#+begin_src python :results output :exports both
+imputer = IterativeImputer(random_state=Data.random_seed)
+
+final_x_train = pandas.DataFrame(imputer.fit_transform(X_train),
+                                 columns=X_train.columns)
+early_stopping_model_2 = XGBRegressor(random_state=Data.random_seed,
+                                      learning_rate=0.05,
+                                      early_stopping_rounds=5,
+                                      n_estimators=500)
+early_stopping_model_2.fit(final_x_train, y_train, eval_set=[(X_validate, y_validate)],
+                         verbose=False)
+print(mean_absolute_error(early_stopping_model_2.predict(X_validate),
+                          y_validate))
+#+end_src
+
+#+RESULTS:
+: 16516.399373929795
+
+* End
+*** Make a Submission using the XGB early-stopping model
+
+#+begin_src python :results none
+predictions = early_stopping_model.predict(X_test)
+output = pandas.DataFrame({'Id': X_test.index,
+                           'SalePrice': predictions})
+output.to_csv(DATA_PATH/'submission.csv', index=False)
+#+end_src
+
+This got a score of /14777.96266/ on the kaggle submissions page.
+
+*** Random Search CV
+#+begin_src python :results none
+predictions = search.predict(X_test)
+output = pandas.DataFrame({'Id': X_test.index,
+                           'SalePrice': predictions})
+output.to_csv(DATA_PATH/'submission.csv', index=False)
+#+end_src
+
+This one got a score of /14976.55345/, so the early stopping model is the best one so far... It had fewer trees than the model that the RandomSearch CV ended up with, maybe the Random Search overfit the data.
+
+*** Early Stopping with Imputation
+#+begin_src python :results none
+predictions = early_stopping_model_2.predict(X_test)
+output = pandas.DataFrame({'Id': X_test.index,
+                           'SalePrice': predictions})
+output.to_csv(DATA_PATH/'submission.csv', index=False)
+#+end_src
+
+This gets a score of /14965.20801/ so it looks like the XGBoost model without imputation is the best one.

@@ -1,0 +1,155 @@
+#+BEGIN_COMMENT
+.. title: Exploring Housing Data
+.. slug: exploring-housing-data
+.. date: 2020-02-17 18:30:21 UTC-08:00
+.. tags: tutorial,exploration,kaggle
+.. category: Tutorial
+.. link: 
+.. description: Exploring housing data for Ames Iowa,
+.. type: text
+.. status: 
+.. updated: 
+#+END_COMMENT
+#+OPTIONS: ^:{}
+#+TOC: headlines 
+#+PROPERTY: header-args :session /home/athena/.local/share/jupyter/runtime/kernel-d6c86127-e6fd-4398-9da4-ccfb571e61f6.json
+* Beginning
+  This is a re-do of the kaggle [[https://www.kaggle.com/learn/intro-to-machine-learning][Intro to Machine Learning]] tutorial - Explore Your data.
+** Imports
+*** Python
+#+begin_src python :results none
+from argparse import Namespace
+from datetime import datetime
+from functools import partial
+from pathlib import Path
+#+end_src
+*** PyPi
+#+begin_src python :results none
+from sklearn.model_selection import cross_val_score, train_test_split
+from sklearn.linear_model import ElasticNet, Lasso, LinearRegression, Ridge
+from sklearn.tree import DecisionTreeRegressor
+
+import hvplot.pandas
+import pandas
+#+end_src
+*** Others
+#+begin_src python :results none
+from graeae import EmbedHoloviews, EnvironmentLoader, Timer
+#+end_src
+** Set Up
+*** Plottting
+#+begin_src python :results none
+SLUG = "exploring-housing-data"
+OUTPUT_PATH = Path("../../files/posts/tutorials/")/SLUG
+Embed = partial(EmbedHoloviews, folder_path=OUTPUT_PATH)
+Plot = Namespace(
+    height=800,
+    width=1000,
+)
+#+end_src
+*** The Timer
+#+begin_src python :results none
+TIMER = Timer()
+#+end_src
+*** Environment
+#+begin_src python :results none
+ENVIRONMENT = EnvironmentLoader()
+#+end_src
+*** The Data
+#+begin_src python :results none
+data = pandas.read_csv(
+    Path(ENVIRONMENT["HOUSE-PRICES-IOWA"]).expanduser()/"train.csv")
+#+end_src
+* Middle
+** Summary Statistics
+#+begin_src python :results output :exports both
+print(data.describe())
+#+end_src
+
+#+RESULTS:
+#+begin_example
+                Id   MSSubClass  LotFrontage        LotArea  OverallQual  \
+count  1460.000000  1460.000000  1201.000000    1460.000000  1460.000000   
+mean    730.500000    56.897260    70.049958   10516.828082     6.099315   
+std     421.610009    42.300571    24.284752    9981.264932     1.382997   
+min       1.000000    20.000000    21.000000    1300.000000     1.000000   
+25%     365.750000    20.000000    59.000000    7553.500000     5.000000   
+50%     730.500000    50.000000    69.000000    9478.500000     6.000000   
+75%    1095.250000    70.000000    80.000000   11601.500000     7.000000   
+max    1460.000000   190.000000   313.000000  215245.000000    10.000000   
+
+       OverallCond    YearBuilt  YearRemodAdd   MasVnrArea   BsmtFinSF1  ...  \
+count  1460.000000  1460.000000   1460.000000  1452.000000  1460.000000  ...   
+mean      5.575342  1971.267808   1984.865753   103.685262   443.639726  ...   
+std       1.112799    30.202904     20.645407   181.066207   456.098091  ...   
+min       1.000000  1872.000000   1950.000000     0.000000     0.000000  ...   
+25%       5.000000  1954.000000   1967.000000     0.000000     0.000000  ...   
+50%       5.000000  1973.000000   1994.000000     0.000000   383.500000  ...   
+75%       6.000000  2000.000000   2004.000000   166.000000   712.250000  ...   
+max       9.000000  2010.000000   2010.000000  1600.000000  5644.000000  ...   
+
+        WoodDeckSF  OpenPorchSF  EnclosedPorch    3SsnPorch  ScreenPorch  \
+count  1460.000000  1460.000000    1460.000000  1460.000000  1460.000000   
+mean     94.244521    46.660274      21.954110     3.409589    15.060959   
+std     125.338794    66.256028      61.119149    29.317331    55.757415   
+min       0.000000     0.000000       0.000000     0.000000     0.000000   
+25%       0.000000     0.000000       0.000000     0.000000     0.000000   
+50%       0.000000    25.000000       0.000000     0.000000     0.000000   
+75%     168.000000    68.000000       0.000000     0.000000     0.000000   
+max     857.000000   547.000000     552.000000   508.000000   480.000000   
+
+          PoolArea       MiscVal       MoSold       YrSold      SalePrice  
+count  1460.000000   1460.000000  1460.000000  1460.000000    1460.000000  
+mean      2.758904     43.489041     6.321918  2007.815753  180921.195890  
+std      40.177307    496.123024     2.703626     1.328095   79442.502883  
+min       0.000000      0.000000     1.000000  2006.000000   34900.000000  
+25%       0.000000      0.000000     5.000000  2007.000000  129975.000000  
+50%       0.000000      0.000000     6.000000  2008.000000  163000.000000  
+75%       0.000000      0.000000     8.000000  2009.000000  214000.000000  
+max     738.000000  15500.000000    12.000000  2010.000000  755000.000000  
+
+[8 rows x 38 columns]
+#+end_example
+
+** What is the average lot size (rounded to nearest integer)?
+
+#+begin_src python :results output :exports both
+print(f"{data.LotArea.mean().round().astype(int):,}")
+#+end_src
+
+#+RESULTS:
+: 10,517
+** As of today, how old is the newest home (current year - the date in which it was built)
+#+begin_src python :results output :exports both
+print(f"{datetime.now().year - data.YearBuilt.max()} years")
+#+end_src
+
+#+RESULTS:
+: 10 years
+** Think About Your Data
+#+begin_quote
+The newest house in your data isn't that new.  A few potential explanations for this:
+ 1. They haven't built new houses where this data was collected.
+ 2. The data was collected a long time ago. Houses built after the data publication wouldn't show up.
+ 
+If the reason is explanation #1 above, does that affect your trust in the model you build with this data? What about if it is reason #2?
+#+end_quote
+If they haven't built new homes but the data is current, then that's not a problem, the problem would come if the data is old.
+
+#+begin_quote
+How could you dig into the data to see which explanation is more plausible?
+#+end_quote
+
+#+begin_src python :results output :exports both
+print(data.YrSold.max())
+#+end_src
+
+#+RESULTS:
+: 2010
+
+The fact that there haven't been any sales in the last ten years leans credence to the idea that the dataset is kind of old.
+
+* End
+** Sources
+   - De Cock D. Ames, Iowa: Alternative to the Boston housing data as an end of semester regression project. Journal of Statistics Education. 2011 Nov 1;19(3). [[http://jse.amstat.org/v19n3/decock.pdf][Link to PDF]]
+

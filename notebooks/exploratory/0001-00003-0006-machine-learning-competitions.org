@@ -1,0 +1,356 @@
+#+BEGIN_COMMENT
+.. title: Machine Learning Competitions
+.. slug: machine-learning-competitions
+.. date: 2020-02-18 10:16:45 UTC-08:00
+.. tags: tutorial,kaggle
+.. category: Tutorial
+.. link: 
+.. description: The final part of the Kaggle Introduction to Machine Learning tutorial.
+.. type: text
+.. status: 
+.. updated: 
+
+#+END_COMMENT
+#+OPTIONS: ^:{}
+#+TOC: headlines 
+#+PROPERTY: header-args :session /run/user/1000/jupyter/kernel-21421e8e-10b1-4b52-b454-2a199b2180f9.json
+* Beginning
+#+begin_quote
+In this exercise, you will create and submit predictions for a Kaggle competition. You can then improve your model (e.g. by adding features) to improve and see how you stack up to others taking this micro-course.
+
+The steps in this notebook are:
+1. Build a Random Forest model with all of your data (**X** and **y**)
+2. Read in the "test" data, which doesn't include values for the target.  Predict home values in the test data with your Random Forest model.
+3. Submit those predictions to the competition and see your score.
+4. Optionally, come back to see if you can improve your model by adding features or changing your model. Then you can resubmit to see how that stacks up on the competition leaderboard.
+#+end_quote
+** Imports
+*** Python
+#+begin_src python :results none
+from argparse import Namespace
+from datetime import datetime
+from functools import partial
+from pathlib import Path
+#+end_src
+*** PyPi
+#+begin_src python :results none
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_absolute_error
+from sklearn.model_selection import cross_val_score, train_test_split
+from sklearn.linear_model import LinearRegression
+from sklearn.tree import DecisionTreeRegressor
+
+import hvplot.pandas
+import pandas
+#+end_src
+*** Others
+#+begin_src python :results none
+from graeae import EmbedHoloviews, EnvironmentLoader, Timer
+#+end_src
+** Set Up
+*** Plottting
+#+begin_src python :results none
+SLUG = "underfitting-and-overfitting-exercise"
+OUTPUT_PATH = Path("../../files/posts/tutorials/")/SLUG
+Embed = partial(EmbedHoloviews, folder_path=OUTPUT_PATH)
+Plot = Namespace(
+    height=800,
+    width=1000,
+)
+#+end_src
+*** The Timer
+#+begin_src python :results none
+TIMER = Timer()
+#+end_src
+*** Environment
+#+begin_src python :results none
+ENVIRONMENT = EnvironmentLoader()
+#+end_src
+*** The Data
+#+begin_src python :results none
+DATA_PATH = Path(ENVIRONMENT["HOUSE-PRICES-IOWA"]).expanduser()
+data = pandas.read_csv(
+    DATA_PATH/"train.csv")
+
+test_data = pandas.read_csv(
+    DATA_PATH/"test.csv"
+)
+#+end_src
+* Middle
+** Preliminary 1: Specify Prediction Target
+Select the target variable, which corresponds to the sales price. Save this to a new variable called `y`. You'll need to print a list of the columns to find the name of the column you need.
+
+Our target is /SalePrice/.
+
+#+begin_src python :results none
+Y = data.SalePrice
+#+end_src
+** Preliminary 2: Create X
+#+begin_quote
+ Now you will create a DataFrame called `X` holding the predictive features.
+ 
+ Since you want only some columns from the original data, you'll first create a list with the names of the columns you want in `X`.
+ 
+ You'll use just the following columns in the list (you can copy and paste the whole list to save some typing, though you'll still need to add quotes):
+     * LotArea
+     * YearBuilt
+     * 1stFlrSF
+     * 2ndFlrSF
+     * FullBath
+     * BedroomAbvGr
+     * TotRmsAbvGrd
+#+end_quote
+
+#+begin_src python :results none
+FEATURES = [
+    "LotArea",
+    "YearBuilt",
+    "1stFlrSF",
+    "2ndFlrSF",
+    "FullBath",
+    "BedroomAbvGr",
+    "TotRmsAbvGrd",
+]
+X = data[FEATURES]
+#+end_src
+
+Split up the data into training and validation sets.
+
+#+begin_src python :results none
+x_train, x_validate, y_train, y_validate = train_test_split(X, Y, random_state=1)
+#+end_src
+** Preliminary 3: Specify and Fit Model
+*** A Linear Regression Model
+    As a baseline, I'll fit a simple [[https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.LinearRegression.html][Linear Regression]] (ordinary-least-squares) model.
+#+begin_src python :results output :exports both
+regression = LinearRegression()
+scores = cross_val_score(regression, x_train, y_train, cv=5)
+print(f"{scores.mean():0.2f} (+/- {2 * scores.std():0.2f})")
+regression = regression.fit(x_train, y_train)
+print(f"Training R^2: {regression.score(x_train, y_train): 0.2f}")
+print(f"Validation R^2: {regression.score(x_validate, y_validate):0.2f}")
+#+end_src
+
+#+RESULTS:
+: 0.66 (+/- 0.17)
+: Training R^2:  0.68
+: Validation R^2: 0.77
+
+*** Decision Tree
+
+#+begin_quote
+Create a =DecisionTreeRegressor= and save it as =iowa_model=. Ensure you've done the relevant import from sklearn to run this command.
+
+Then fit the model you just created using the data in =X= and =y= that you saved above.
+#+end_quote
+#+begin_src python :results output :exports both
+tree = DecisionTreeRegressor()
+scores = cross_val_score(tree, x_train, y_train, cv=5)
+print(f"{scores.mean():0.2f} (+/- {2 * scores.std():0.2f})")
+
+tree = tree.fit(x_train, y_train)
+print(f"Training R^2: {tree.score(x_train, y_train): 0.2f}")
+print(f"Validation R^2: {tree.score(x_validate, y_validate):0.2f}")
+#+end_src
+
+#+RESULTS:
+: 0.52 (+/- 0.34)
+: Training R^2:  1.00
+: Validation R^2: 0.75
+
+So our linear regression actually does better than the tree does. It looks like the tree might be overfitting on the training data.
+** Preliminary 4: Make Some Predictions
+#+begin_src python :results none
+tree_predict = tree.predict(x_validate)
+regression_predict = regression.predict(x_validate)
+#+end_src
+** Preliminary 5: Calculate the Mean Absolute Error in Validation Data
+#+begin_src python :results output :exports both
+tree_mae = mean_absolute_error(y_true=y_validate, y_pred=tree_predict)
+regression_mae = mean_absolute_error(y_true=y_validate, y_pred=regression_predict)
+
+print(f"Tree MAE: {tree_mae: 0.2f}")
+print(f"Regression MAE: {regression_mae: 0.2f}")
+#+end_src
+
+#+RESULTS:
+: Tree MAE:  28969.44
+: Regression MAE:  27228.88
+
+The tree's error is a little higher than the regression line's.
+
+** Preliminary 6: Compare Different Tree Sizes
+#+begin_quote
+Write a loop that tries the following values for *max_leaf_nodes* from a set of possible values.
+ 
+Call the *get_mae* function on each value of max_leaf_nodes. Store the output in some way that allows you to select the value of =max_leaf_nodes= that gives the most accurate model on your data.
+#+end_quote
+
+#+begin_src python :results none
+def get_mae(max_leaf_nodes, train_X=x_train, val_X=x_validate, train_y=y_train, val_y=y_validate):
+    model = DecisionTreeRegressor(max_leaf_nodes=max_leaf_nodes, random_state=0)
+    model.fit(train_X, train_y)
+    preds_val = model.predict(val_X)
+    mae = mean_absolute_error(val_y, preds_val)
+    return mae
+#+end_src
+
+#+begin_quote
+Write a loop to find the ideal tree size from =candidate_max_leaf_nodes=.
+#+end_quote
+
+#+begin_src python :results output :exports both
+candidate_max_leaf_nodes = [5, 25, 50, 100, 250, 500]
+outcomes = [(get_mae(nodes), nodes) for nodes in candidate_max_leaf_nodes]
+best = min(outcomes)
+print(best)
+best_tree_size = best[1]
+#+end_src
+
+#+RESULTS:
+: (27282.50803885739, 100)
+
+#+begin_src python :results none
+mae = pandas.DataFrame(dict(nodes=candidate_max_leaf_nodes, mae = [outcome[0] for outcome in outcomes]))
+plot = mae.hvplot(x="nodes", y="mae").opts(title="Node Mean Absolute Error",
+                                           width=Plot.width,
+                                           height=Plot.height)
+source = Embed(plot=plot, file_name="node_mean_absolute_error")()
+#+end_src
+
+#+begin_src python :results output html :exports both
+print(source)
+#+end_src
+
+#+RESULTS:
+#+begin_export html
+: <object type="text/html" data="node_mean_absolute_error.html" style="width:100%" height=800>
+:   <p>Figure Missing</p>
+: </object>
+#+end_export
+
+Looking at the plot you can see that the error drops until you hit 100 nodes and then begins to rise again as it overfits the data with more nodes.
+
+Let's see how much this improves our model using \(r^2\).
+
+#+begin_src python :results output :exports both
+tree = DecisionTreeRegressor(max_leaf_nodes=best_tree_size)
+scores = cross_val_score(tree, x_train, y_train, cv=5)
+print(f"{scores.mean():0.2f} (+/- {2 * scores.std():0.2f})")
+
+tree = tree.fit(x_train, y_train)
+print(f"Training R^2: {tree.score(x_train, y_train): 0.2f}")
+print(f"Validation R^2: {tree.score(x_validate, y_validate):0.2f}")
+
+#+end_src
+
+#+RESULTS:
+: 0.58 (+/- 0.32)
+: Training R^2:  0.93
+: Validation R^2: 0.76
+
+We've improved it slightly, it's probably still overfitting the model but not as much.
+** Preliminary 7: Use a Random Forest
+#+begin_src python :results output :exports both
+forest = RandomForestRegressor(random_state=1, n_estimators=100)
+
+scores = cross_val_score(forest, x_train, y_train, cv=5)
+print(f"{scores.mean():0.2f} (+/- {2 * scores.std():0.2f})")
+
+tree = forest.fit(x_train, y_train)
+print(f"Training R^2: {forest.score(x_train, y_train): 0.2f}")
+print(f"Validation R^2: {forest.score(x_validate, y_validate):0.2f}")
+#+end_src
+
+#+RESULTS:
+: 0.76 (+/- 0.11)
+: Training R^2:  0.97
+: Validation R^2: 0.85
+
+So the defaults already beat the regression and decision tree model.
+
+#+begin_src python :results output :exports both
+forest_predictions = forest.predict(x_validate)
+forest_mae = mean_absolute_error(y_true=y_validate, y_pred=forest_predictions)
+
+tree_mae = mean_absolute_error(y_true=y_validate, y_pred=tree_predict)
+regression_mae = mean_absolute_error(y_true=y_validate, y_pred=regression_predict)
+
+print(f"Tree MAE: {tree_mae: 0.2f}")
+print(f"Regression MAE: {regression_mae: 0.2f}")
+print(f"Forest MAE: {forest_mae:0.2f}")
+#+end_src
+
+#+RESULTS:
+: Tree MAE:  28969.44
+: Regression MAE:  27228.88
+: Forest MAE: 21857.16
+
+
+So the forest also has a much better Mean Absolute Error than the other two models.
+
+** Step 1: Creating a Model For the Competition
+#+begin_quote
+ Build a Random Forest model and train it on all of **X** and **y**.
+#+end_quote
+
+#+begin_src python :results output :exports both
+forest = RandomForestRegressor(random_state=1, n_estimators=100)
+forest.fit(X, Y)
+#+end_src
+
+#+RESULTS:
+
+** Step 2: Make Predictions
+
+#+begin_quote
+ Read the file of "test" data. And apply your model to make predictions.
+ Then create test_X which comes from test_data but includes only the columns you used for prediction.
+ The list of columns is stored in a variable called features.
+#+end_quote
+
+#+begin_src python :results none
+x_test = test_data[FEATURES]
+#+end_src
+
+#+begin_quote
+ Make predictions which we will submit. 
+#+end_quote
+
+#+begin_src python :results none
+predictions = forest.predict(x_test)
+#+end_src
+
+** Step 3: Save the Submission
+
+#+begin_src python :results none
+submission = pandas.DataFrame(dict(Id=test_data.Id, SalePrice=predictions))
+submission.to_csv(DATA_PATH/"submission.csv", index=False)
+#+end_src
+** Step 4: Test Your Work
+#+begin_quote
+To test your results, you'll need to join the competition (if you haven't already).  So open a new window by clicking on [[https://www.kaggle.com/c/home-data-for-ml-course][this link]].  Then click on the **Join Competition** button.
+#+end_quote
+
+[[https://i.imgur.com/wLmFtH3.png][join competition image]]
+
+#+begin_quote
+Next, follow the instructions below:
+ 1. Begin by clicking on the blue **COMMIT** button in the top right corner of this window.  This will generate a pop-up window.  
+ 2. After your code has finished running, click on the blue **Open Version** button in the top right of the pop-up window.  This brings you into view mode of the same page. You will need to scroll down to get back to these instructions.
+ 3. Click on the **Output** tab on the left of the screen.  Then, click on the **Submit to Competition** button to submit your results to the leaderboard.
+
+ You have now successfully submitted to the competition.
+#+end_quote
+** Step 5: Continuing Your Progress
+#+begin_quote
+There are many ways to improve your model, and **experimenting is a great way to learn at this point.**
+ 
+The best way to improve your model is to add features.  Look at the list of columns and think about what might affect home prices.  Some features will cause errors because of issues like missing values or non-numeric data types. 
+#+end_quote
+* End
+The submission is evaluated using the Root Mean Squared Error of the logarithms of the sale prices. The logarithm makes it so the errors for the cheap houses and the expensive houses are equally bad.
+
+For this model you get a score of **27,217.91640*. The current leader has a score of 0, which would seem to imply he downloaded the original set and learned the data, the second best is /8,830/.
+
+ The **[[https://www.kaggle.com/learn/intermediate-machine-learning][Intermediate Machine Learning]]** micro-course will teach you how to handle these types of features. You will also learn to use **xgboost**, a technique giving even better accuracy than Random Forest.

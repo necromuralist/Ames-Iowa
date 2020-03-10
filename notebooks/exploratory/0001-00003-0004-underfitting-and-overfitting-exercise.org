@@ -1,0 +1,281 @@
+#+BEGIN_COMMENT
+.. title: Underfitting and Overfitting Exercise
+.. slug: underfitting-and-overfitting-exercise
+.. date: 2020-02-18 10:11:19 UTC-08:00
+.. tags: tutorial,kaggle
+.. category: Tutorial
+.. link: 
+.. description: Part 4 of the Kaggle Introduction to Machine Learning tutorial.
+.. type: text
+.. status: 
+.. updated: 
+
+#+END_COMMENT
+#+OPTIONS: ^:{}
+#+TOC: headlines 
+#+PROPERTY: header-args :session /run/user/1000/jupyter/kernel-02423713-83f7-4a07-bc52-7cb394caee86.json
+* Beginning
+  This is the fourth part of kaggle's [[https://www.kaggle.com/learn/intro-to-machine-learning][Introduction to Machine Learning]] tutorial - Overfitting and Underfitting.
+** Imports
+*** Python
+#+begin_src python :results none
+from argparse import Namespace
+from datetime import datetime
+from functools import partial
+from pathlib import Path
+#+end_src
+*** PyPi
+#+begin_src python :results none
+from sklearn.metrics import mean_absolute_error
+from sklearn.model_selection import cross_val_score, train_test_split
+from sklearn.linear_model import LinearRegression
+from sklearn.tree import DecisionTreeRegressor
+
+import hvplot.pandas
+import pandas
+#+end_src
+*** Others
+#+begin_src python :results none
+from graeae import EmbedHoloviews, EnvironmentLoader, Timer
+#+end_src
+** Set Up
+*** Plottting
+#+begin_src python :results none
+SLUG = "underfitting-and-overfitting-exercise"
+OUTPUT_PATH = Path("../../files/posts/tutorials/")/SLUG
+Embed = partial(EmbedHoloviews, folder_path=OUTPUT_PATH)
+Plot = Namespace(
+    height=800,
+    width=1000,
+)
+#+end_src
+*** The Timer
+#+begin_src python :results none
+TIMER = Timer()
+#+end_src
+*** Environment
+#+begin_src python :results none
+ENVIRONMENT = EnvironmentLoader()
+#+end_src
+*** The Data
+#+begin_src python :results none
+data = pandas.read_csv(
+    Path(ENVIRONMENT["HOUSE-PRICES-IOWA"]).expanduser()/"train.csv")
+#+end_src
+* Middle
+** Preliminary 1: Specify Prediction Target
+Select the target variable, which corresponds to the sales price. Save this to a new variable called `y`. You'll need to print a list of the columns to find the name of the column you need.
+
+Our target is /SalePrice/.
+
+#+begin_src python :results none
+Y = data.SalePrice
+#+end_src
+** Preliminary 2: Create X
+#+begin_quote
+ Now you will create a DataFrame called `X` holding the predictive features.
+ 
+ Since you want only some columns from the original data, you'll first create a list with the names of the columns you want in `X`.
+ 
+ You'll use just the following columns in the list (you can copy and paste the whole list to save some typing, though you'll still need to add quotes):
+     * LotArea
+     * YearBuilt
+     * 1stFlrSF
+     * 2ndFlrSF
+     * FullBath
+     * BedroomAbvGr
+     * TotRmsAbvGrd
+#+end_quote
+
+#+begin_src python :results none
+FEATURES = [
+    "LotArea",
+    "YearBuilt",
+    "1stFlrSF",
+    "2ndFlrSF",
+    "FullBath",
+    "BedroomAbvGr",
+    "TotRmsAbvGrd",
+]
+X = data[FEATURES]
+#+end_src
+
+Split up the data into training and validation sets.
+
+#+begin_src python :results none
+x_train, x_validate, y_train, y_validate = train_test_split(X, Y, random_state=1)
+#+end_src
+** Preliminary 3: Specify and Fit Model
+*** A Linear Regression Model
+    As a baseline, I'll fit a simple [[https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.LinearRegression.html][Linear Regression]] (ordinary-least-squares) model.
+#+begin_src python :results output :exports both
+regression = LinearRegression()
+scores = cross_val_score(regression, x_train, y_train, cv=5)
+print(f"{scores.mean():0.2f} (+/- {2 * scores.std():0.2f})")
+regression = regression.fit(x_train, y_train)
+print(f"Training R^2: {regression.score(x_train, y_train): 0.2f}")
+print(f"Validation R^2: {regression.score(x_validate, y_validate):0.2f}")
+#+end_src
+
+#+RESULTS:
+: 0.66 (+/- 0.17)
+: Training R^2:  0.68
+: Validation R^2: 0.77
+
+*** Decision Tree
+
+#+begin_quote
+Create a =DecisionTreeRegressor= and save it as =iowa_model=. Ensure you've done the relevant import from sklearn to run this command.
+
+Then fit the model you just created using the data in =X= and =y= that you saved above.
+#+end_quote
+#+begin_src python :results output :exports both
+tree = DecisionTreeRegressor()
+scores = cross_val_score(tree, x_train, y_train, cv=5)
+print(f"{scores.mean():0.2f} (+/- {2 * scores.std():0.2f})")
+
+tree = tree.fit(x_train, y_train)
+print(f"Training R^2: {tree.score(x_train, y_train): 0.2f}")
+print(f"Validation R^2: {tree.score(x_validate, y_validate):0.2f}")
+#+end_src
+
+#+RESULTS:
+: 0.54 (+/- 0.32)
+: Training R^2:  1.00
+: Validation R^2: 0.75
+
+So our linear regression actually does better than the tree does. It looks like the tree might be overfitting on the training data.
+** Preliminary 4: Make Some Predictions
+#+begin_src python :results none
+tree_predict = tree.predict(x_validate)
+regression_predict = regression.predict(x_validate)
+#+end_src
+** Preliminary 5: Calculate the Mean Absolute Error in Validation Data
+#+begin_src python :results output :exports both
+tree_mae = mean_absolute_error(y_true=y_validate, y_pred=tree_predict)
+regression_mae = mean_absolute_error(y_true=y_validate, y_pred=regression_predict)
+
+print(f"Tree MAE: {tree_mae: 0.2f}")
+print(f"Regression MAE: {regression_mae: 0.2f}")
+#+end_src
+
+#+RESULTS:
+: Tree MAE:  29371.52
+: Regression MAE:  27228.88
+
+The tree's error is a little higher than the regression line's.
+
+** Step 1: Compare Different Tree Sizes
+#+begin_quote
+Write a loop that tries the following values for *max_leaf_nodes* from a set of possible values.
+ 
+Call the *get_mae* function on each value of max_leaf_nodes. Store the output in some way that allows you to select the value of =max_leaf_nodes= that gives the most accurate model on your data.
+#+end_quote
+
+#+begin_src python :results none
+def get_mae(max_leaf_nodes, train_X=x_train, val_X=x_validate, train_y=y_train, val_y=y_validate):
+    model = DecisionTreeRegressor(max_leaf_nodes=max_leaf_nodes, random_state=0)
+    model.fit(train_X, train_y)
+    preds_val = model.predict(val_X)
+    mae = mean_absolute_error(val_y, preds_val)
+    return mae
+#+end_src
+
+#+begin_quote
+Write a loop to find the ideal tree size from =candidate_max_leaf_nodes=.
+#+end_quote
+
+#+begin_src python :results output :exports both
+candidate_max_leaf_nodes = [5, 25, 50, 100, 250, 500]
+outcomes = [(get_mae(nodes), nodes) for nodes in candidate_max_leaf_nodes]
+best = min(outcomes)
+print(best)
+best_tree_size = best[1]
+#+end_src
+
+#+RESULTS:
+: (27282.50803885739, 100)
+
+#+begin_src python :results none
+mae = pandas.DataFrame(dict(nodes=candidate_max_leaf_nodes, mae = [outcome[0] for outcome in outcomes]))
+plot = mae.hvplot(x="nodes", y="mae").opts(title="Node Mean Absolute Error",
+                                           width=Plot.width,
+                                           height=Plot.height)
+source = Embed(plot=plot, file_name="node_mean_absolute_error")()
+#+end_src
+
+#+begin_src python :results output html :exports both
+print(source)
+#+end_src
+
+#+RESULTS:
+#+begin_export html
+: <object type="text/html" data="node_mean_absolute_error.html" style="width:100%" height=800>
+:   <p>Figure Missing</p>
+: </object>
+#+end_export
+
+Looking at the plot you can see that the error drops until you hit 100 nodes and then begins to rise again as it overfits the data with more nodes.
+
+Let's see how much this improves our model using \(r^2\).
+
+#+begin_src python :results output :exports both
+tree = DecisionTreeRegressor(max_leaf_nodes=best_tree_size)
+scores = cross_val_score(tree, x_train, y_train, cv=5)
+print(f"{scores.mean():0.2f} (+/- {2 * scores.std():0.2f})")
+
+tree = tree.fit(x_train, y_train)
+print(f"Training R^2: {tree.score(x_train, y_train): 0.2f}")
+print(f"Validation R^2: {tree.score(x_validate, y_validate):0.2f}")
+
+#+end_src
+
+#+RESULTS:
+: 0.60 (+/- 0.26)
+: Training R^2:  0.93
+: Validation R^2: 0.76
+
+We've improved it slightly, it's probably still overfitting the model but not as much.
+
+** Step 2: Fit Model Using All Data
+#+begin_quote
+ You know the best tree size. If you were going to deploy this model in practice, you would make it even more accurate by using all of the data and keeping that tree size.  That is, you don't need to hold out the validation data now that you've made all your modeling decisions.
+#+end_quote
+
+#+begin_src python :results none
+final_model = DecisionTreeRegressor(max_leaf_nodes = best_tree_size)
+final_model.fit(X, Y)
+#+end_src
+
+#+begin_src python :results none
+predictions_first = tree.predict(X)
+predictions_final = final_model.predict(X)
+
+x_y_tree = pandas.DataFrame(dict(predicted=predictions_first, actual=Y))
+x_y_line = pandas.DataFrame(dict(predicted=predictions_final, actual=Y))
+ideal = pandas.DataFrame(dict(x=Y, y=Y))
+
+tree_plot = x_y_tree.hvplot.scatter(x="actual", y="predicted", label="Default")
+line_plot = x_y_line.hvplot.scatter(x="actual", y="predicted", label="Tuned")
+ideal_plot = ideal.hvplot(x="x", y="y")
+plot = (tree_plot * line_plot * ideal_plot).opts(title="Decision Tree Actual Vs Predictions",
+                                    width=Plot.width,
+                                    height=Plot.height)
+source = Embed(plot=plot, file_name="decision_tree_actual_vs_predicted")()
+#+end_src
+
+#+begin_src python :results output html :exports both
+print(source)
+#+end_src
+
+#+RESULTS:
+#+begin_export html
+: <object type="text/html" data="decision_tree_actual_vs_predicted.html" style="width:100%" height=800>
+:   <p>Figure Missing</p>
+: </object>
+#+end_export
+
+The tuned model seems closer to the predicted.
+
+* End
+  That's a basic way to tune hyperparameters to improve your model. But our decision tree still isn't doing as well as the regression line. Next up we'll try an ensemble method - Random Forests.

@@ -1,0 +1,606 @@
+#+BEGIN_COMMENT
+.. title: Categorical Values
+.. slug: categorical-values
+.. date: 2020-02-20 21:13:09 UTC-08:00
+.. tags: tutorial,kaggle,categorical
+.. category: Tutorial
+.. link: 
+.. description: Kaggle's intermediate machine learning tutorial on handling categorical values.
+.. type: text
+.. status: 
+.. updated: 
+
+#+END_COMMENT
+#+OPTIONS: ^:{}
+#+TOC: headlines 5
+#+PROPERTY: header-args :session /home/athena/.local/share/jupyter/runtime/kernel-9969ffe6-383a-495d-b019-f6636bf0ab63.json
+* Beginning
+#+begin_quote
+Now it's your turn to test your new knowledge of **missing values** handling. You'll probably find it makes a big difference.
+#+end_quote
+** Imports
+*** Python
+#+begin_src python :results none
+from argparse import Namespace
+from datetime import datetime
+from functools import partial
+from pathlib import Path
+#+end_src
+*** PyPi
+#+begin_src python :results none
+from eli5.sklearn import PermutationImportance
+from matplotlib import pyplot
+from pdpbox import pdp
+
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.experimental import enable_iterative_imputer
+from sklearn.impute import IterativeImputer
+from sklearn.metrics import mean_absolute_error
+from sklearn.model_selection import cross_val_score, train_test_split, RandomizedSearchCV
+from sklearn.preprocessing import LabelEncoder, OneHotEncoder
+
+from tabulate import tabulate
+
+import eli5
+import hvplot.pandas
+import pandas
+import shap
+#+end_src
+*** Others
+#+begin_src python :results none
+from graeae import CountPercentage, EmbedHoloviews, EnvironmentLoader, Timer
+#+end_src
+** Set Up
+*** Table
+#+begin_src python :results none
+TABLE = partial(tabulate, tablefmt="orgtbl", showindex=False, headers="keys")
+#+end_src
+*** Plottting
+#+begin_src python :results none
+SLUG = "categorical-values"
+OUTPUT_PATH = Path("../../files/posts/tutorials/")/SLUG
+Embed = partial(EmbedHoloviews, folder_path=OUTPUT_PATH)
+Plot = Namespace(
+    height=800,
+    width=1000,
+)
+#+end_src
+*** The Timer
+#+begin_src python :results none
+TIMER = Timer()
+#+end_src
+*** Environment
+#+begin_src python :results none
+ENVIRONMENT = EnvironmentLoader()
+#+end_src
+*** The Data
+#+begin_src python :results none
+DATA_PATH = Path(ENVIRONMENT["HOUSE-PRICES-IOWA"]).expanduser()
+train_data = pandas.read_csv(
+    DATA_PATH/"train.csv", index_col="Id")
+
+test_data = pandas.read_csv(
+    DATA_PATH/"test.csv", index_col="Id"
+)
+#+end_src
+*** Some Constants
+#+begin_src python :results none
+Data = Namespace(
+    target="SalePrice",
+    train_size=0.8,
+    test_size=0.2,
+    random_seed=0,
+)
+#+end_src
+* Middle
+** Setup The Data
+   Split up the target and features.
+#+begin_src python :results none
+assert not train_data[Data.target].hasnans
+y = train_data[Data.target]
+X = train_data.drop([Data.target], axis="columns")
+#+end_src
+We know that there's missing data, but since this is about handling categorical data, not missing data, we'll just drop the columns that have missing values.
+
+#+begin_src python :results output :exports both
+print(X.shape)
+X = X[[column for column in X.columns if not X[column].hasnans]]
+test_data = test_data[X.columns]
+print(X.shape)
+#+end_src
+
+#+RESULTS:
+: (1460, 79)
+: (1460, 60)
+
+So we lost 19 columns - more than I was expecting.
+
+Now do the train-test split.
+
+#+begin_src python :results none
+X_train, X_validate, y_train, y_validate = train_test_split(
+    X, y,
+    train_size=Data.train_size, test_size=Data.test_size,
+    random_state=Data.random_seed)
+#+end_src
+
+#+begin_src python :results output :exports both
+print(drop_X_train.info())
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+# [goto error]
+: ---------------------------------------------------------------------------
+: NameError                                 Traceback (most recent call last)
+: <ipython-input-13-002dd7ea4a19> in <module>
+: ----> 1 print(drop_X_train.info())
+: 
+: NameError: name 'drop_X_train' is not defined
+:END:
+#+begin_quote
+Notice that the dataset contains both numerical and categorical variables.  You'll need to encode the categorical data before training a model.
+#+end_quote
+** Score Dataset
+   This is the same function used in the missing-values tutorial. It's used to compare different models' Mean Absolute Error (MAE) as we make changes.
+#+begin_src python :results none
+def score_dataset(X_train, X_valid, y_train, y_valid):
+    model = RandomForestRegressor(n_estimators=100, random_state=0)
+    model.fit(X_train, y_train)
+    preds = model.predict(X_valid)
+    return mean_absolute_error(y_valid, preds)
+#+end_src
+
+** Step 1: Drop Categorical Columns
+   The first approach is to just drop all the non-numeric columns.
+
+#+begin_src python :results output exports both
+columns = [column for column in X_train.columns if X_train[column].dtype != object]
+drop_X_train = X_train[columns]
+drop_X_validate = X_validate[columns]
+
+print("MAE from Approach 1 (Drop categorical variables):")
+print(f"{score_dataset(drop_X_train, drop_X_validate, y_train, y_validate):,}")
+#+end_src
+
+#+RESULTS:
+: MAE from Approach 1 (Drop categorical variables):
+: 17,837.82570776256
+
+Using all the numeric columns does better than we did with our initial subset of columns (20,928.5), but not as good as we did with imputed values (16,656.3).
+
+** Step 2: Label encoding
+#+begin_quote
+Before jumping into label encoding, we'll investigate the dataset.  Specifically, we'll look at the ='Condition2'= column.  The code cell below prints the unique entries in both the training and validation sets.
+#+end_quote
+
+
+#+begin_src python :results output raw :exports both
+train_counter = CountPercentage(X_train.Condition2, dropna=False)
+validate_counter = CountPercentage(X_validate.Condition2, dropna=False)
+train_counter()
+#+end_src
+
+#+RESULTS:
+| Value   |   Count |   Percent (%) |
+|---------+---------+---------------|
+| Norm    |    1160 |         99.32 |
+| Feedr   |       4 |          0.34 |
+| PosA    |       1 |          0.09 |
+| Artery  |       1 |          0.09 |
+| RRAe    |       1 |          0.09 |
+| PosN    |       1 |          0.09 |
+
+#+begin_src python :results output raw :exports both
+validate_counter()
+#+end_src
+
+#+RESULTS:
+| Value   |   Count |   Percent (%) |
+|---------+---------+---------------|
+| Norm    |     285 |         97.60 |
+| Feedr   |       2 |          0.68 |
+| RRNn    |       2 |          0.68 |
+| RRAn    |       1 |          0.34 |
+| Artery  |       1 |          0.34 |
+| PosN    |       1 |          0.34 |
+
+It looks like the validation data has values that aren't in the training data (and vice versa), e.g. =RRNn=, so encoding the training set won't work with the validation set.
+
+#+begin_quote
+This is a common problem that you'll encounter with real-world data, and there are many approaches to fixing this issue.  For instance, you can write a custom label encoder to deal with new categories.  The simplest approach, however, is to drop the problematic categorical columns.  
+
+Run the code cell below to save the problematic columns to a Python list =bad_label_cols=.  Likewise, columns that can be safely label encoded are stored in =good_label_cols=.
+#+end_quote
+
+#+begin_src python :results output raw :exports both
+# All categorical columns
+object_columns = [column for column in X_train.columns if X_train[column].dtype == "object"]
+
+# Columns that can be safely label encoded
+good_label_columns = [column for column in object_columns if 
+                      set(X_train[column]) == set(X_validate[column])]
+        
+# Problematic columns that will be dropped from the dataset
+bad_label_columns = list(set(object_columns)-set(good_label_columns))
+        
+print('Categorical columns that will be label encoded:')
+for column in  good_label_columns:
+    print(f" - {column}")
+
+print('\nCategorical columns that will be dropped from the dataset:')
+for column in bad_label_columns:
+    print(f" - {column}")
+#+end_src
+
+#+RESULTS:
+Categorical columns that will be label encoded:
+ - MSZoning
+ - Street
+ - LotShape
+ - LandContour
+ - LotConfig
+ - BldgType
+ - HouseStyle
+ - ExterQual
+ - CentralAir
+ - KitchenQual
+ - PavedDrive
+ - SaleCondition
+
+Categorical columns that will be dropped from the dataset:
+ - Condition1
+ - RoofMatl
+ - HeatingQC
+ - ExterCond
+ - RoofStyle
+ - SaleType
+ - Foundation
+ - Condition2
+ - Exterior2nd
+ - Neighborhood
+ - Heating
+ - LandSlope
+ - Utilities
+ - Functional
+ - Exterior1st
+*** Drop the Bad Columns
+
+#+begin_src python :results none
+label_X_train = X_train.drop(bad_label_columns, axis="columns")
+label_X_validate = X_validate.drop(bad_label_columns, axis="columns")
+#+end_src
+
+*** Encode the Categorical Values
+    We're going to use sklearn's [[https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.LabelEncoder.html][LabelEncoder]].
+
+**Note:** Sklearn's documentation says that this is meant only for categorical target data (the labels), not the input data like we're doing here. Later on we're going to use one-hot-encoding, which is what sklearn recommends (the LabelEncoder method implies that the numbers are values, not just numeric codes for strings).
+
+It's going to create integer values for each of the unique values in each column.
+
+#+begin_src python :results none
+for column in good_label_columns:
+    encoder = LabelEncoder()    
+    label_X_train.loc[:, column] = encoder.fit_transform(label_X_train[column])
+    label_X_validate.loc[:, column] = encoder.fit_transform(label_X_validate[column])
+#+end_src
+
+Now check how it did.
+
+#+begin_src python :results output :exports both
+print("MAE from Approach 2 (Label Encoding):") 
+print(f"{score_dataset(label_X_train, label_X_validate, y_train, y_validate):,}")
+#+end_src
+
+#+RESULTS:
+: MAE from Approach 2 (Label Encoding):
+: 17,575.291883561644
+
+So it does a little better than the previous approach of just dropping all the categorical data, but not as well as it did when we imputed the missing numeric values.
+** Step 3: Investigating cardinality
+#+begin_quote
+So far, you've tried two different approaches to dealing with categorical variables.  And, you've seen that encoding categorical data yields better results than removing columns from the dataset.
+
+Soon, you'll try one-hot encoding.  Before then, there's one additional topic we need to cover.  Begin by running the next code cell without changes.  
+#+end_quote
+
+Get number of unique entries in each column with categorical data
+
+#+begin_src python :results output raw :exports both
+object_nunique = [X_train[column].nunique() for column in object_columns]
+
+## Print number of unique entries by column, in descending
+cardinality = pandas.DataFrame(dict(Column=object_columns,
+                                    Cardinality=object_nunique)
+                     ).sort_values(by="Cardinality", ascending=False)
+print(TABLE(cardinality))
+#+end_src
+
+#+RESULTS:
+| Column        |   Cardinality |
+|---------------+---------------|
+| Neighborhood  |            25 |
+| Exterior2nd   |            16 |
+| Exterior1st   |            15 |
+| SaleType      |             9 |
+| Condition1    |             9 |
+| HouseStyle    |             8 |
+| RoofMatl      |             7 |
+| Functional    |             6 |
+| Heating       |             6 |
+| Foundation    |             6 |
+| RoofStyle     |             6 |
+| SaleCondition |             6 |
+| Condition2    |             6 |
+| BldgType      |             5 |
+| ExterCond     |             5 |
+| LotConfig     |             5 |
+| HeatingQC     |             5 |
+| MSZoning      |             5 |
+| ExterQual     |             4 |
+| KitchenQual   |             4 |
+| LandContour   |             4 |
+| LotShape      |             4 |
+| LandSlope     |             3 |
+| PavedDrive    |             3 |
+| Street        |             2 |
+| Utilities     |             2 |
+| CentralAir    |             2 |
+
+
+
+#+begin_quote
+The output above shows, for each column with categorical data, the number of unique values in the column.  For instance, the ='Street'= column in the training data has two unique values: ='Grvl'= and ='Pave'=, corresponding to a gravel road and a paved road, respectively.
+
+We refer to the number of unique entries of a categorical variable as the **cardinality** of that categorical variable.  For instance, the ='Street'= variable has cardinality 2.
+#+end_quote
+*** Questions
+#+begin_quote
+How many categorical variables in the training data have cardinality greater than 10?
+#+end_quote
+
+#+begin_src python :results output :exports both
+print(len(cardinality[cardinality.Cardinality > 10]))
+#+end_src
+
+#+RESULTS:
+: 3
+
+#+begin_quote
+How many columns are needed to one-hot encode the 'Neighborhood' variable in the training data?
+#+end_quote
+
+#+begin_src python :results output :exports both
+print(cardinality[cardinality.Column=="Neighborhood"].Cardinality.iloc[0])
+#+end_src
+
+#+RESULTS:
+: 25
+
+#+begin_quote
+For large datasets with many rows, one-hot encoding can greatly expand the size of the dataset.  For this reason, we typically will only one-hot encode columns with relatively low cardinality.  Then, high cardinality columns can either be dropped from the dataset, or we can use label encoding.
+
+As an example, consider a dataset with 10,000 rows, and containing one categorical column with 100 unique entries.  
+ - If this column is replaced with the corresponding one-hot encoding, how many entries are added to the dataset?  
+ - If we instead replace the column with the label encoding, how many entries are added?
+#+end_quote
+
+#+begin_src python :results output :exports both
+print(10000 * 100 - 10000)
+#+end_src
+
+#+RESULTS:
+: 990000
+
+** Step 4: One-hot encoding
+#+begin_quote
+In this step, you'll experiment with one-hot encoding.  But, instead of encoding all of the categorical variables in the dataset, you'll only create a one-hot encoding for columns with cardinality less than 10.
+
+Run the code cell below without changes to set =low_cardinality_cols= to a Python list containing the columns that will be one-hot encoded.  Likewise, =high_cardinality_cols= contains a list of categorical columns that will be dropped from the dataset.
+#+end_quote
+
+#+begin_src python :results none
+low_cardinality_columns = cardinality[cardinality.Cardinality < 10].Column
+high_cardinality_columns = cardinality[~cardinality.Column.isin(low_cardinality_columns)].Column
+#+end_src
+
+#+begin_src python :results output raw :exports both
+print("Categorical columns that will be one-hot encoded:")
+for column in low_cardinality_columns:
+    print(f" - {column}")
+#+end_src
+
+#+RESULTS:
+Categorical columns that will be one-hot encoded:
+ - SaleType
+ - Condition1
+ - HouseStyle
+ - RoofMatl
+ - Functional
+ - Heating
+ - Foundation
+ - RoofStyle
+ - SaleCondition
+ - Condition2
+ - BldgType
+ - ExterCond
+ - LotConfig
+ - HeatingQC
+ - MSZoning
+ - ExterQual
+ - KitchenQual
+ - LandContour
+ - LotShape
+ - LandSlope
+ - PavedDrive
+ - Street
+ - Utilities
+ - CentralAir
+
+#+begin_src python :results output raw :exports both
+print('Categorical columns that will be dropped from the dataset:')
+for column in high_cardinality_columns:
+    print(f" - {column}")
+#+end_src
+
+#+RESULTS:
+Categorical columns that will be dropped from the dataset:
+ - Neighborhood
+ - Exterior2nd
+ - Exterior1st
+
+#+begin_quote
+Use the next code cell to one-hot encode the data in =X_train= and =X_valid=.  Set the preprocessed DataFrames to =OH_X_train= and =OH_X_valid=, respectively.  
+ - The full list of categorical columns in the dataset can be found in the Python list =object_cols=.
+ - You should only one-hot encode the categorical columns in =low_cardinality_cols=.  All other categorical columns should be dropped from the dataset. 
+#+end_quote
+
+#+begin_src python :results none
+OH_train = X_train[low_cardinality_columns]
+OH_validate = X_validate[low_cardinality_columns]
+
+encoder = OneHotEncoder(sparse=False, handle_unknown="ignore")
+
+OH_train = pandas.DataFrame(encoder.fit_transform(OH_train))
+OH_validate = pandas.DataFrame(encoder.fit_transform(OH_validate))
+
+OH_train.index = X_train.index
+OH_validate.index = X_validate.index
+
+X_train_numeric = X_train.drop(object_columns, axis="columns")
+X_validate_numeric = X_validate.drop(object_columns, axis="columns")
+
+OH_X_train = pandas.concat([X_train_numeric, OH_train], axis="columns")
+OH_X_validate = pandas.concat([X_validate_numeric, OH_validate], axis="columns")
+#+end_src
+
+#+begin_src python :results output :exports both
+print("MAE from Approach 3 (One-Hot Encoding):") 
+print(f"{score_dataset(OH_X_train, OH_X_validate, y_train, y_validate):,}")
+#+end_src
+
+#+RESULTS:
+: MAE from Approach 3 (One-Hot Encoding):
+: 17,429.93404109589
+
+So we've improved slightly, but still not as well as the all numeric data with imputed data.
+
+** Step 5: Generate test predictions and submit your results
+
+#+begin_quote
+After you complete Step 4, if you'd like to use what you've learned to submit your results to the leaderboard, you'll need to preprocess the test data before generating predictions.
+#+end_quote
+
+To get the imputation working again we need to re-add the columns with missing values. I'm also going to encode the entire dataset before splitting so that everything is encoded, rather than ignoring the values in the validation set that aren't in the training set.
+
+#+begin_src python :results output :exports 
+X_2 = train_data.drop([Data.target], axis="columns")
+objects = [column for column in X_2.columns if X_2[column].dtype==object]
+missing = [column for column in objects if X_2[column].hasnans]
+
+X_2 = X_2.drop(missing, axis="columns")
+OH_X = X_2.drop(high_cardinality_columns, axis="columns").reset_index(drop=True)
+for column in low_cardinality_columns:
+    encoder = OneHotEncoder(sparse=False)
+    encoded = encoder.fit_transform(
+        OH_X[column].to_numpy().reshape(-1, 1)
+    )
+    reencoded = pandas.DataFrame(encoded, columns=encoder.get_feature_names())
+    OH_X = pandas.concat([OH_X, reencoded], axis="columns").drop(
+        column, axis="columns")
+
+imputer = IterativeImputer(random_state=Data.random_seed)
+OH_X = pandas.DataFrame(imputer.fit_transform(OH_X), columns=OH_X.columns)
+OH_X_train, OH_X_validate, y_train, y_validate = train_test_split(
+    OH_X, y,
+    train_size=Data.train_size, test_size=Data.test_size,
+    random_state=Data.random_seed)
+
+model = RandomForestRegressor(n_estimators=100, random_state=Data.random_seed)
+model.fit(OH_X_train, y_train)
+
+preds_valid = model.predict(OH_X_validate)
+error = mean_absolute_error(y_validate, preds_valid)
+print(f"MAE: {error:0.2f}")
+#+end_src
+
+#+RESULTS:
+: MAE: 17680.04
+
+It seems to have gotten worse... but maybe that's because we tuned the hyperparameters to the numeric-only model.
+*** Hyperparameter Tuning
+#+begin_src python :results output :exports both
+estimators = list(range(50, 200, 10))
+max_depth = list(range(10, 100, 10)) + [None]
+
+grid = dict(n_estimators=estimators,
+            max_depth=max_depth)
+
+model = RandomForestRegressor()
+search = RandomizedSearchCV(estimator=model,
+                            param_distributions=grid,
+                            n_iter=40,
+                            n_jobs=-1,
+                            random_state=1)
+
+search.fit(OH_X_train, y_train)
+model = search.best_estimator_
+print(f"CV Training R^2: {search.best_score_:0.2f}")
+print(f"Training R^2: {model.score(OH_X_train, y_train): 0.2f}")
+print(f"Validation R^2: {model.score(OH_X_validate, y_validate):0.2f}")
+predictions = model.predict(OH_X_validate)
+print(f"Mean Absolute Error: {mean_absolute_error(y_validate, predictions)}")
+print(search.best_params_)
+#+end_src
+
+#+RESULTS:
+: CV Training R^2: 0.86
+: Training R^2:  0.98
+: Validation R^2: 0.84
+: Mean Absolute Error: 17615.31526418787
+: {'n_estimators': 140, 'max_depth': 60}
+
+So it can get a little better, but it doesn't do as well as with just the numeric features. Maybe we don't have enough data to make it work.
+
+
+#+begin_src python :results output raw :exports both
+permutor = PermutationImportance(model, random_state=Data.random_seed).fit(
+    OH_X_validate, y_validate)
+ipython_html = eli5.show_weights(
+    permutor,
+    feature_names=OH_X_validate.columns.tolist())
+table = pandas.read_html(ipython_html.data)[0]
+print(TABLE(table))
+#+end_src
+
+#+RESULTS:
+#+begin_example
+| Weight           | Feature      |
+|------------------+--------------|
+| 0.4825  ± 0.1218 | OverallQual  |
+| 0.1019  ± 0.0350 | GrLivArea    |
+| 0.0199  ± 0.0082 | TotalBsmtSF  |
+| 0.0171  ± 0.0067 | BsmtFinSF1   |
+| 0.0131  ± 0.0062 | 1stFlrSF     |
+| 0.0096  ± 0.0078 | GarageCars   |
+| 0.0084  ± 0.0011 | 2ndFlrSF     |
+| 0.0074  ± 0.0026 | LotArea      |
+| 0.0051  ± 0.0022 | YearRemodAdd |
+| 0.0050  ± 0.0034 | GarageArea   |
+| 0.0048  ± 0.0047 | BedroomAbvGr |
+| 0.0036  ± 0.0009 | LotFrontage  |
+| 0.0031  ± 0.0021 | YearBuilt    |
+| 0.0031  ± 0.0014 | OverallCond  |
+| 0.0029  ± 0.0012 | WoodDeckSF   |
+| 0.0021  ± 0.0021 | MasVnrArea   |
+| 0.0014  ± 0.0016 | OpenPorchSF  |
+| 0.0012  ± 0.0009 | FullBath     |
+| 0.0009  ± 0.0008 | x0_RM        |
+| 0.0008  ± 0.0036 | GarageYrBlt  |
+| … 142 more …     | … 142 more … |
+#+end_example
+
+It looks like the most significant categorical features are =LandContour= (Bnk and Lvl), either =Condition1= or =Condition2= (Norm) and =ExterCond= (TA). I just took a quick look they don't seem to contribute a whole lot to the model.
+* End
+
+This was a brief look at handling categorical data.

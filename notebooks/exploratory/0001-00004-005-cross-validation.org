@@ -1,0 +1,213 @@
+#+BEGIN_COMMENT
+.. title: Cross Validation
+.. slug: cross-validation
+.. date: 2020-02-20 21:15:04 UTC-08:00
+.. tags: tutorial,cross-validation
+.. category: Tutorial
+.. link: 
+.. description: Kaggle's intermediate Machine Learning tutorial on Cross-Validation. 
+.. type: text
+.. status: 
+.. updated: 
+
+#+END_COMMENT
+#+OPTIONS: ^:{}
+#+TOC: headlines 5
+#+PROPERTY: header-args :session /home/athena/.local/share/jupyter/runtime/kernel-9427f603-d07a-46c0-9e25-05099f6c6be9.json
+* Beginning
+#+begin_quote
+In this exercise, you will leverage what you've learned to tune a machine learning model with **cross-validation**.
+#+end_quote
+** Imports
+*** Python
+#+begin_src python :results none
+from argparse import Namespace
+from functools import partial
+from pathlib import Path
+#+end_src
+*** PyPi
+#+begin_src python :results none
+from eli5.sklearn import PermutationImportance
+from matplotlib import pyplot
+
+from sklearn.compose import ColumnTransformer
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.experimental import enable_iterative_imputer
+from sklearn.impute import IterativeImputer
+from sklearn.impute import SimpleImputer
+from sklearn.metrics import mean_absolute_error
+from sklearn.model_selection import cross_val_score, train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder
+
+from tabulate import tabulate
+
+import eli5
+import hvplot.pandas
+import pandas
+import shap
+#+end_src
+*** Others
+#+begin_src python :results none
+from graeae import CountPercentage, EmbedHoloviews, EnvironmentLoader, Timer
+#+end_src
+** Set Up
+*** Table
+#+begin_src python :results none
+TABLE = partial(tabulate, tablefmt="orgtbl", showindex=False, headers="keys")
+#+end_src
+*** Plottting
+#+begin_src python :results none
+SLUG = "cross-validation"
+OUTPUT_PATH = Path("../../files/posts/tutorials/")/SLUG
+if not OUTPUT_PATH.is_dir():
+    OUTPUT_PATH.mkdir()
+Embed = partial(EmbedHoloviews, folder_path=OUTPUT_PATH)
+Plot = Namespace(
+    height=800,
+    width=1000,
+)
+#+end_src
+*** The Timer
+#+begin_src python :results none
+TIMER = Timer()
+#+end_src
+*** Environment
+#+begin_src python :results none
+ENVIRONMENT = EnvironmentLoader()
+#+end_src
+*** The Data
+#+begin_src python :results none
+DATA_PATH = Path(ENVIRONMENT["HOUSE-PRICES-IOWA"]).expanduser()
+train_data = pandas.read_csv(
+    DATA_PATH/"train.csv", index_col="Id")
+
+test_data = pandas.read_csv(
+    DATA_PATH/"test.csv", index_col="Id"
+)
+X_test = test_data
+#+end_src
+*** Some Constants
+#+begin_src python :results none
+Data = Namespace(
+    target="SalePrice",
+    train_size=0.8,
+    test_size=0.2,
+    random_seed=0,
+)
+#+end_src
+** Setup The Data
+   Split up the target and features.
+#+begin_src python :results none
+assert not train_data[Data.target].hasnans
+y = train_data[Data.target]
+X = train_data.drop([Data.target], axis="columns")
+#+end_src
+
+*** Drop Categorical Columns
+    To make it simpler (since we're only looking at cross-validation, and having them didn't seem to help) we're going to drop the categorical columns.
+#+begin_src python :results output :exports both
+numeric_columns = [column for column in X.columns if not X[column].dtype == "object"]
+rows_0, columns_0 = X.shape
+X = X[numeric_columns].copy()
+row, columns = X.shape
+print(f"Keeping {columns} columns, dropped ({columns_0 - columns})")
+#+end_src
+
+#+RESULTS:
+: Keeping 36 columns, dropped (43)
+
+* Middle
+** Some Pipelines
+#+begin_quote
+So far, you've learned how to build pipelines with scikit-learn.  For instance, the pipeline below will use [[https://scikit-learn.org/stable/modules/generated/sklearn.impute.SimpleImputer.html][=SimpleImputer()=]] to replace missing values in the data, before using [[https://scikit-learn.org/stable/modules/generated/sklearn.ensemble.RandomForestRegressor.html][=RandomForestRegressor()=]] to train a random forest model to make predictions.  We set the number of trees in the random forest model with the =n_estimators= parameter, and setting =random_state= ensures reproducibility.
+#+end_quote
+
+#+begin_src python :results none
+pipeline = Pipeline(steps=[
+    ('preprocessor', SimpleImputer()),
+    ('model', RandomForestRegressor(n_estimators=50, random_state=Data.random_seed))
+])
+#+end_src
+
+#+begin_quote
+You have also learned how to use pipelines in cross-validation.  The code below uses the [[https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.cross_val_score.html][=cross_val_score()=]] function to obtain the mean absolute error (MAE), averaged across five different folds.  Recall we set the number of folds with the =cv= parameter.
+#+end_quote
+
+#+begin_src python :results output :exports both
+# Multiply by -1 since sklearn calculates *negative* MAE
+scores = -1 * cross_val_score(pipeline, X, y,
+                              cv=5,
+                              scoring='neg_mean_absolute_error')
+
+print("Average MAE score:", scores.mean())
+
+#+end_src
+
+#+RESULTS:
+: Average MAE score: 18276.410356164386
+** Step 1: Write a useful function
+#+begin_quote
+In this exercise, you'll use cross-validation to select parameters for a machine learning model.
+ 
+Begin by writing a function =get_score()= that reports the average (over three cross-validation folds) MAE of a machine learning pipeline that uses:
+ - the data in =X= and =y= to create folds,
+ - =SimpleImputer()= (with all parameters left as default) to replace missing values, and
+ - =RandomForestRegressor()= (with =random_state=0=) to fit a random forest model.
+ 
+The =n_estimators= parameter supplied to =get_score()= is used when setting the number of trees in the random forest model.  
+#+end_quote
+
+#+begin_src python :results none
+def get_score(n_estimators):
+    """Return the average MAE over 3 CV folds of random forest model.
+    
+    Args:
+     n_estimators: the number of trees in the forest
+    """
+    pipeline = Pipeline(steps=[
+        ('preprocessor', SimpleImputer()),
+        ('model', RandomForestRegressor(n_estimators=n_estimators,
+                                        random_state=Data.random_seed))
+    ])
+    scores = -1 * cross_val_score(pipeline, X, y,
+                                  cv=3,
+                                  scoring='neg_mean_absolute_error')
+    # Replace this body with your own code
+    return scores.mean()
+#+end_src
+
+** Step 2: Test different parameter values
+#+begin_quote
+Now, you will use the function that you defined in Step 1 to evaluate the model performance corresponding to eight different values for the number of trees in the random forest: 50, 100, 150, ..., 300, 350, 400.
+Store your results in a Python dictionary =results=, where =results[i]= is the average MAE returned by =get_scores(i)=.
+#+end_quote
+
+#+begin_src python :results none
+results = {trees: get_score(trees) for trees in range(50, 450, 50)}
+
+results_frame = pandas.DataFrame.from_dict({"Trees": list(results.keys()), "MAE": list(results.values())})
+#+end_src
+
+** Step 3: Find the best parameter value
+#+begin_src python :results none
+plot = results_frame.hvplot(x="Trees", y="MAE").opts(
+    title="Cross-Validation Mean Absolute Error",
+    width=Plot.width,
+    height=Plot.height)
+
+source = Embed(plot=plot, file_name="mean_absolute_error")()
+#+end_src
+
+#+begin_src python :results output html :exports both
+print(source)
+#+end_src
+
+#+RESULTS:
+#+begin_export html
+: <object type="text/html" data="mean_absolute_error.html" style="width:100%" height=800>
+:   <p>Figure Missing</p>
+: </object>
+#+end_export
+
+200 appears to be the best number of trees for our forest.

@@ -1,0 +1,609 @@
+#+BEGIN_COMMENT
+.. title: Missing Values
+.. slug: missing-values
+.. date: 2020-02-20 21:07:15 UTC-08:00
+.. tags: kaggle,tutorial,cleaning
+.. category: Tutorial
+.. link: 
+.. description: Part two of kaggle's intermediate machine learning tutorial.
+.. type: text
+.. status: 
+.. updated: 
+
+#+END_COMMENT
+#+OPTIONS: ^:{}
+#+TOC: headlines 5
+#+PROPERTY: header-args :session /home/athena/.local/share/jupyter/runtime/kernel-ce6d3ee8-e27c-4a71-9569-9fd15d550ded.json
+* Beginning
+#+begin_quote
+Now it's your turn to test your new knowledge of **missing values** handling. You'll probably find it makes a big difference.
+#+end_quote
+** Imports
+*** Python
+#+begin_src python :results none
+from argparse import Namespace
+from datetime import datetime
+from functools import partial
+from pathlib import Path
+#+end_src
+*** PyPi
+#+begin_src python :results none
+from eli5.sklearn import PermutationImportance
+from matplotlib import pyplot
+from pdpbox import pdp
+
+import shap
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.experimental import enable_iterative_imputer
+from sklearn.impute import IterativeImputer, KNNImputer, SimpleImputer
+from sklearn.metrics import mean_absolute_error
+from sklearn.model_selection import cross_val_score, train_test_split
+from tabulate import tabulate
+
+import eli5
+import hvplot.pandas
+import pandas
+#+end_src
+*** Others
+#+begin_src python :results none
+from graeae import EmbedHoloviews, EnvironmentLoader, Timer
+#+end_src
+** Set Up
+*** Table
+#+begin_src python :results none
+TABLE = partial(tabulate, tablefmt="orgtbl", showindex=False, headers="keys")
+#+end_src
+*** Plottting
+#+begin_src python :results none
+SLUG = "missing-values"
+OUTPUT_PATH = Path("../../files/posts/tutorials/")/SLUG
+Embed = partial(EmbedHoloviews, folder_path=OUTPUT_PATH)
+Plot = Namespace(
+    height=800,
+    width=1000,
+)
+#+end_src
+*** The Timer
+#+begin_src python :results none
+TIMER = Timer()
+#+end_src
+*** Environment
+#+begin_src python :results none
+ENVIRONMENT = EnvironmentLoader()
+#+end_src
+*** The Data
+#+begin_src python :results none
+DATA_PATH = Path(ENVIRONMENT["HOUSE-PRICES-IOWA"]).expanduser()
+train_data = pandas.read_csv(
+    DATA_PATH/"train.csv", index_col="Id")
+
+test_data = pandas.read_csv(
+    DATA_PATH/"test.csv", index_col="Id"
+)
+#+end_src
+*** Some Constants
+#+begin_src python :results none
+Data = Namespace(
+    target="SalePrice",
+    train_size=0.8,
+    test_size=0.2,
+    random_seed=0,
+)
+#+end_src
+* Middle
+** Remove Training Data with no Target
+#+begin_src python :results output :exports both
+print(f"{len(train_data):,}")
+train_data = train_data.dropna(axis="rows", subset=[Data.target])
+print(f"{len(train_data):,}")
+#+end_src
+
+#+RESULTS:
+: 1,460
+: 1,460
+
+Doesn't look like there were any missing target values.
+
+#+begin_src python :results none
+y = train_data[Data.target]
+x_train = train_data.drop([Data.target], axis="columns")
+#+end_src
+
+** Numeric Data Only
+#+begin_quote
+To keep things simple, we'll use only numerical predictors
+#+end_quote
+
+#+begin_src python :results output :exports both
+print(len(x_train.columns))
+X = x_train.select_dtypes(exclude=["object"])
+print(len(X.columns))
+#+end_src
+
+#+RESULTS:
+: 79
+: 36
+
+#+begin_src python :results output :exports both
+print(len(test_data.columns))
+x_test = test_data.select_dtypes(exclude=["object"])
+print(len(x_test.columns))
+#+end_src
+
+#+RESULTS:
+: 79
+: 36
+** Split the Training and Validation Data
+
+#+begin_src python :results none
+x_train, x_validate, y_train, y_validate = train_test_split(
+    X, y,
+    train_size=Data.train_size,
+    test_size=Data.test_size,
+    random_state=Data.random_seed)
+#+end_src
+
+** Step 1: Preliminary investigation
+
+#+begin_src python :results output :exports both
+missing_by_column = x_train.isna().sum()
+missed = missing_by_column[missing_by_column > 0]
+print(TABLE(missed.reset_index().rename(columns={"index": "Feature", 0:"Missing"})))
+#+end_src
+
+#+RESULTS:
+| Feature     |   Missing |
+|-------------+-----------|
+| LotFrontage |       212 |
+| MasVnrArea  |         6 |
+| GarageYrBlt |        58 |
+
+According to the data description these features are:
+
+**LotFrontage**: Linear feet of street connected to property
+**MasVnrArea:** Masonry veneer area in square feet
+**GarageYrBlt**: Year garage was built
+
+#+begin_src python :results none
+Missing = Namespace(
+    frontage = "LotFrontage",
+    masonry = "MasVnrArea",
+    garage = "GarageYrBlt",
+    columns = ["LotFrontage", "MasVnrArea", "GarageYrBlt"],
+)
+#+end_src
+*** Part A
+**** How many rows are in the training data?
+ #+begin_src python :results output :exports both
+print(f"{len(x_train):,}")
+ #+end_src
+
+ #+RESULTS:
+ : 1,168
+
+**** Fill in the line below: How many columns in the training data have missing values?
+ #+begin_src python :results output :exports both
+print(f"{sum([1 for column in x_train.columns if x_train[column].hasnans])}")
+ #+end_src
+
+ #+RESULTS:
+ : 3
+
+**** Fill in the line below: How many missing entries are contained in  all of the training data?
+ #+begin_src python :results output :exports both
+print(f"{missed.sum()}")
+ #+end_src
+
+ #+RESULTS:
+ : 276
+
+**Note:** For some reason it doesn't appear to be explicitly mentioned in the notebook, but if you don't deal with the missing values and try and fit the trees to the data you'll end up with an error.
+
+#+begin_src python :results output :exports both
+try:
+    score_dataset(x_train, x_validate, y_train, y_validate)
+except ValueError as error:
+    print(error)
+#+end_src
+
+#+RESULTS:
+: Input contains NaN, infinity or a value too large for dtype('float32').
+
+*** Part B
+#+begin_quote
+Considering your answers above, what do you think is likely the best approach to dealing with the missing values?
+#+end_quote
+
+For the cases where there are few missing values I would drop them - e.g. =MasVnrArea=. For =GarageYrBlt= I would use the most common value in the same neighborhood and for the =LotFrontage= I would use the mean or median.
+** score_dataset
+    This function will help check the Mean Absolute Error (MAE) as we make changes to the dataset.
+
+#+begin_src python :results none
+def score_dataset(X_train, X_valid, y_train, y_valid):
+    model = RandomForestRegressor(n_estimators=100, random_state=0)
+    model.fit(X_train, y_train)
+    preds = model.predict(X_valid)
+    return mean_absolute_error(y_valid, preds)
+#+end_src
+
+** Step 2: Drop columns with missing values
+   We'll try dropping the columns in the training and validation.
+#+begin_src python :results output :exports both
+missing_columns = missed.index
+keep = [column for column in x_train.columns if not x_train[column].hasnans]
+reduced_X_train = x_train[keep]
+reduced_X_valid = x_validate[keep]
+
+print("MAE (Drop columns with missing values):")
+drop_columns_error = score_dataset(reduced_X_train, reduced_X_valid, y_train, y_validate)
+print(f"{drop_columns_error:0.2f}")
+#+end_src
+
+#+RESULTS:
+: MAE (Drop columns with missing values):
+: 17837.83
+** Step 3: Imputation
+*** Part A
+#+begin_quote
+Use the next code cell to impute missing values with the mean value along each column.  Set the preprocessed DataFrames to =imputed_X_train= and =imputed_X_valid=.  Make sure that the column names match those in =X_train= and =X_valid=.
+#+end_quote
+
+Here we'll use sklearn's [[https://scikit-learn.org/stable/modules/generated/sklearn.impute.SimpleImputer.html][SimpleImputer]] which fills missing values with the means of the columns (by default). It accepts pandas DataFrames but returns a numpy array so we need to rebuild the DataFrame afterward. The notebook suggests you can just re-set the columns, but I don't know what they're expecting, since it isn't a DataFrame. As long as we end up with the same thing in the end I guess it's okay.
+
+#+begin_src python :results none
+imputer = SimpleImputer()
+imputed_X_train = pandas.DataFrame(imputer.fit_transform(x_train),
+                                   columns=x_train.columns)
+imputed_X_valid = pandas.DataFrame(imputer.transform(x_validate))
+#+end_src
+
+Now check the Mean Absolute Error for our imputed frames.
+
+#+begin_src python :results output :exports both
+print("MAE (Imputation):")
+impute_mean_error = score_dataset(imputed_X_train, imputed_X_valid, y_train, y_validate)
+print(f"{impute_mean_error:0.2f}")
+print(f"Improvement: {drop_columns_error - impute_mean_error:0.2f}")
+#+end_src
+
+#+RESULTS:
+: MAE (Imputation):
+: 18056.85
+: Improvement: -219.03
+
+So we actually got a little worse using mean imputation.
+*** Part B
+#+begin_quote
+Compare the MAE from each approach.  Does anything surprise you about the results?  Why do you think one approach performed better than the other?
+#+end_quote
+
+As note previously, the imputation did worse than discarding the columns did. It might be that using the mean threw the values off so much that it did worse than just throwing the values away. This might indicate that the values aren't symmetrically distributed so using a central tendency doesn't reflect the data very well.
+
+#+begin_src python :results none
+plot = x_train.hvplot.box(y="LotFrontage").opts(
+    title="LotFrontage",
+    width=Plot.width,
+    height=Plot.height,
+)
+source = Embed(plot=plot, file_name="lot_frontage_box")()
+#+end_src
+
+#+begin_src python :results output html :exports both
+print(source)
+#+end_src
+
+#+RESULTS:
+#+begin_export html
+: <object type="text/html" data="lot_frontage_box.html" style="width:100%" height=800>
+:   <p>Figure Missing</p>
+: </object>
+#+end_export
+
+Looking at the plot you can see that it's right-skewed, with an extreme point over 300 square feet well over the mean:
+
+#+begin_src python :results output :exports both
+print(f"Mean: {x_train.LotFrontage.mean():0.2f} sq ft")
+print(f"Max: {x_train.LotFrontage.max():0.2f} sq ft")
+#+end_src
+
+#+RESULTS:
+: Mean: 69.61 sq ft
+: Max: 313.00 sq ft
+
+#+begin_src python :results none
+plot = x_train.hvplot.box(y="GarageYrBlt").opts(
+    title="GarageYrBlt",
+    width=Plot.width,
+    height=Plot.height,
+)
+source = Embed(plot=plot, file_name="garage_year_built_box")()
+#+end_src
+
+#+begin_src python :results output html :exports both
+print(source)
+#+end_src
+
+#+RESULTS:
+#+begin_export html
+: <object type="text/html" data="garage_year_built_box.html" style="width:100%" height=800>
+:   <p>Figure Missing</p>
+: </object>
+#+end_export
+
+This also looks skewed, but the number of missing points is less so I don't know if it had as much of an effect.
+
+** Step 4: Generate test predictions
+#+begin_quote
+ In this final step, you'll use any approach of your choosing to deal with missing values.  Once you've preprocessed the training and validation features, you'll train and evaluate a random forest model.  Then, you'll preprocess the test data before generating predictions that can be submitted to the competition.
+#+end_quote
+*** Part A
+#+begin_quote
+Use the next code cell to preprocess the training and validation data.  Set the preprocessed DataFrames to =final_X_train= and =final_X_valid=.  **You can use any approach of your choosing here!**  in order for this step to be marked as correct, you need only ensure:
+ - the preprocessed DataFrames have the same number of columns,
+ - the preprocessed DataFrames have no missing values, 
+ - =final_X_train= and =y_train= have the same number of rows, and
+ - =final_X_valid= and =y_valid= have the same number of rows.
+#+end_quote
+
+**** KNN
+Let's try using K-Nearest Neighbors to estimate missing values.
+
+#+begin_src python :results none
+imputer = KNNImputer()
+final_x_train = pandas.DataFrame(imputer.fit_transform(x_train),
+                                 columns=x_train.columns)
+final_x_validate = pandas.DataFrame(imputer.transform(x_validate),
+                                 columns=x_validate.columns)
+#+end_src
+
+***** One Last Try
+
+#+begin_quote
+Run the next code cell to train and evaluate a random forest model.  (*Note that we don't use the =score_dataset()= function above, because we will soon use the trained model to generate test predictions!*)
+#+end_quote
+
+Define and fit the model.
+#+begin_src python :results none
+model = RandomForestRegressor(n_estimators=100, random_state=0)
+model.fit(final_x_train, y_train)
+#+end_src
+
+Get validation predictions and MAE.
+#+begin_src python :results output :exports both
+preds_valid = model.predict(final_x_validate)
+print("MAE (Your approach):")
+final_error = mean_absolute_error(y_validate, preds_valid)
+print(f"{final_error:.2f}")
+print(f"Improvement Over Dropping Columns: {drop_columns_error - final_error:0.2f}")
+print(f"Improvement Over Mean: {impute_mean_error - final_error:0.2f}")
+#+end_src
+
+#+RESULTS:
+: MAE (Your approach):
+: 17834.40
+: Improvement Over Dropping Columns: 3.43
+: Improvement Over Mean: 222.46
+
+So it does a litle better than dropping the columns altogether.
+**** Iterative
+This is an experimental imputer from sklearn based on imputation methods from R.
+
+#+begin_src python :results none
+imputer_2 = IterativeImputer(random_state=Data.random_seed)
+final_x_train_2 = pandas.DataFrame(imputer_2.fit_transform(x_train),
+                                   columns=x_train.columns)
+final_x_validate_2 = pandas.DataFrame(imputer_2.transform(x_validate),
+                                      columns=x_validate.columns)
+#+end_src
+
+***** One Last Try
+
+#+begin_quote
+Run the next code cell to train and evaluate a random forest model.  (*Note that we don't use the =score_dataset()= function above, because we will soon use the trained model to generate test predictions!*)
+#+end_quote
+
+Define and fit the model.
+#+begin_src python :results none
+model = RandomForestRegressor(n_estimators=100, random_state=0)
+model.fit(final_x_train_2, y_train)
+#+end_src
+
+Get validation predictions and MAE.
+#+begin_src python :results output :exports both
+preds_valid = model.predict(final_x_validate_2)
+final_error_2 = mean_absolute_error(y_validate, preds_valid)
+print(f"MAE (Your approach): {final_error_2:0.2f}")
+print(f"Improvement Over Dropping Columns: {drop_columns_error - final_error:0.2f}")
+print(f"Improvement Over Mean: {impute_mean_error - final_error:0.2f}")
+print(f"Improvement over KNN: {final_error - final_error_2: 0.2f}")
+#+end_src
+
+#+RESULTS:
+: MAE (Your approach): 17812.88
+: Improvement Over Dropping Columns: 3.43
+: Improvement Over Mean: 222.46
+: Improvement over KNN:  21.51
+
+There's a slight improvement once again (the imputers have hyperparameters themselves that aren't being tuned so they might be even better than what I'm getting).
+**** Permutation Importance
+     Let's look at the the features that were the most important in our model.
+
+#+begin_src python :results output raw :exports both
+permutor = PermutationImportance(model, random_state=Data.random_seed).fit(
+    final_x_validate_2, y_validate)
+ipython_html = eli5.show_weights(
+    permutor,
+    feature_names=final_x_validate_2.columns.tolist())
+table = pandas.read_html(ipython_html.data)[0]
+print(TABLE(table))
+#+end_src
+
+#+RESULTS:
+| Weight           | Feature      |
+|------------------+--------------|
+| 0.4717  ± 0.0741 | OverallQual  |
+| 0.1163  ± 0.0182 | GrLivArea    |
+| 0.0254  ± 0.0066 | TotalBsmtSF  |
+| 0.0209  ± 0.0040 | BsmtFinSF1   |
+| 0.0127  ± 0.0006 | 2ndFlrSF     |
+| 0.0112  ± 0.0042 | 1stFlrSF     |
+| 0.0090  ± 0.0072 | YearRemodAdd |
+| 0.0079  ± 0.0022 | YearBuilt    |
+| 0.0069  ± 0.0036 | LotArea      |
+| 0.0046  ± 0.0018 | GarageCars   |
+| 0.0039  ± 0.0006 | WoodDeckSF   |
+| 0.0034  ± 0.0026 | GarageYrBlt  |
+| 0.0031  ± 0.0009 | OverallCond  |
+| 0.0027  ± 0.0032 | OpenPorchSF  |
+| 0.0026  ± 0.0008 | LotFrontage  |
+| 0.0026  ± 0.0011 | Fireplaces   |
+| 0.0016  ± 0.0009 | FullBath     |
+| 0.0015  ± 0.0010 | BedroomAbvGr |
+| 0.0014  ± 0.0028 | BsmtUnfSF    |
+| 0.0012  ± 0.0025 | TotRmsAbvGrd |
+| … 16 more …      | … 16 more …  |
+
+It's interesting, but the four most important features (/OverallQual/, /GrLivArea/, /TotalBsmtSF/, and /BsmtFinSF1/) were'nt in our first models. And /LotFrontage/ that we spent all that time in this post filling in is only fifteenth - but looking at our improvements the imputation made, even these seemingly lowm contributiong features helped.
+
+#+begin_src python :results none
+ipython_html = eli5.show_weights(
+    permutor,
+    top = None,
+    feature_names=final_x_validate_2.columns.tolist())
+table = pandas.read_html(ipython_html.data)[0]
+
+table["Weight"] = table.Weight.str.split(expand=True)[0].astype(float)
+plot = table.hvplot.bar(x="Feature", y="Weight").opts(
+    title="Permutation Importance",
+    width=Plot.width,
+    height=Plot.height,
+    xrotation=45)
+source = Embed(plot=plot, file_name="permutation_importance")()
+#+end_src
+
+#+begin_src python :results output html :exports both
+print(source)
+#+end_src
+
+#+RESULTS:
+#+begin_export html
+: <object type="text/html" data="permutation_importance.html" style="width:100%" height=800>
+:   <p>Figure Missing</p>
+: </object>
+#+end_export
+
+Looking at the plot you can see that there's a huge drop from the influence of =OverallQuall= to the influence of the rest of the features.
+
+Let's look at the features that didn't contribute to the model.
+
+#+begin_src python :results output raw :exports both
+print("| Feature | Weight|")
+print("|-+-|")
+for row in table[table.Weight <= 0].itertuples():
+    print(f"|{row.Feature}| {row.Weight}|")
+#+end_src
+
+#+RESULTS:
+| Feature       |  Weight |
+|---------------+---------|
+| MiscVal       |     0.0 |
+| LowQualFinSF  |     0.0 |
+| PoolArea      |     0.0 |
+| EnclosedPorch | -0.0003 |
+| HalfBath      | -0.0004 |
+| YrSold        | -0.0005 |
+| MasVnrArea    | -0.0015 |
+| MoSold        | -0.0058 |
+
+So, no point enclosing that porch or expanding your pool, I guess.
+
+**** The Most Important Feature
+This is the =data_description= entry for =OverallQual=:
+
+**OverallQual:** Rates the overall material and finish of the house
+
+| Value | Description    |
+|-------+----------------|
+|    10 | Very Excellent |
+|     9 | Excellent      |
+|     8 | Very Good      |
+|     7 | Good           |
+|     6 | Above Average  |
+|     5 | Average        |
+|     4 | Below Average  |
+|     3 | Fair           |
+|     2 | Poor           |
+|     1 | Very Poor      |
+
+This appears to be an ordinal rather than a continuous variable, interesting how much it dominates.
+
+***** PDP Plot
+      Here's the amount that the feature changes the sales price as it changes.
+
+#+begin_src python :results output raw :exports both
+FEATURE = "OverallQual"
+pdp_dist = pdp.pdp_isolate(model=model,
+                           dataset=final_x_validate_2,
+                           model_features=final_x_validate_2.columns,
+                           feature=FEATURE)
+pdp.pdp_plot(pdp_dist, FEATURE)
+output = f"{FEATURE}_pdp_plot.png"
+figure = pyplot.gcf()
+figure.subplots_adjust(top=0.5)
+figure.savefig(OUTPUT_PATH/output)
+print(f"[[file:{output}]]")
+#+end_src
+
+#+RESULTS:
+[[file:OverallQual_pdp_plot.png]]
+
+So it looks like once you hit "Above Average" it's pretty much a linear relationship between the overall quality and the sale price.
+***** SHAP Summary
+      Let's take a more visual look at the importance of each feature.
+
+#+begin_src python :results none
+explainer = shap.TreeExplainer(model)
+shap_values = explainer.shap_values(final_x_validate_2)
+#+end_src
+
+#+begin_src python :results output :exports both
+shap.summary_plot(shap_values, final_x_validate_2)
+figure = pyplot.gcf()
+output = "shap_summary.png"
+
+figure.savefig(OUTPUT_PATH/output)
+print(f"[[file:{output}]]")
+#+end_src
+
+#+RESULTS:
+[[file:shap_summary.png]]
+
+Besides reinforcing the importance of =OverallQual=, the plot shows how much spread its influence covers. The odd bunches might reflect the fact that it's a discrete, ordinal feature, not a continuous one.
+* End
+  Make a kaggle submission.
+#+begin_src python :results none
+final_x_test = imputer_2.transform(x_test)
+preds_test = model.predict(final_x_test)
+output = pandas.DataFrame({'Id': x_test.index,
+                           'SalePrice': preds_test})
+output.to_csv(DATA_PATH/'submission.csv', index=False)
+#+end_src
+
+This model gives us an error of 16,656.25822, an improvement over our previous submission where we used only a smaller subset of the features.
+
+#+begin_src python :results output :exports both
+introduction = 27217.91640
+previous = 20928.54621
+current = 16656.25822
+
+print(f"Latest Error: {current:,}")
+print(f"Improvement over the introduction ({introduction:,}): {introduction - current:,}")
+print(f"Improvement over the previous model ({previous:,}): {previous - current:,}")
+#+end_src
+
+#+RESULTS:
+: Latest Error: 16,656.25822
+: Improvement over the introduction (27,217.9164): 10,561.658179999999
+: Improvement over the previous model (20,928.54621): 4,272.287990000001
+
+So by adding in the remaining features we were able to reduce our error by quite a bit.

@@ -1,0 +1,293 @@
+#+BEGIN_COMMENT
+.. title: Pipelines
+.. slug: kaggle-intermediate-machine-learning-pipelines
+.. date: 2020-02-20 21:14:10 UTC-08:00
+.. tags: tutorial,kaggle
+.. category: Tutorial
+.. link: 
+.. description: Kaggle's Intermediate Machine Learning tutorial on pipelines.
+.. type: text
+.. status: 
+.. updated: 
+
+#+END_COMMENT
+#+OPTIONS: ^:{}
+#+TOC: headlines 5
+#+PROPERTY: header-args :session /home/athena/.local/share/jupyter/runtime/kernel-1a5cc4b6-ef09-421d-8811-ea1e6456b07a.json
+* Beginning
+#+begin_quote
+In this exercise, you will use **pipelines** to improve the efficiency of your machine learning code.
+#+end_quote
+** Imports
+*** Python
+#+begin_src python :results none
+from argparse import Namespace
+from functools import partial
+from pathlib import Path
+#+end_src
+*** PyPi
+#+begin_src python :results none
+from eli5.sklearn import PermutationImportance
+from matplotlib import pyplot
+
+from sklearn.compose import ColumnTransformer
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.experimental import enable_iterative_imputer
+from sklearn.impute import IterativeImputer
+from sklearn.impute import SimpleImputer
+from sklearn.metrics import mean_absolute_error
+from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder
+
+from tabulate import tabulate
+
+import eli5
+import pandas
+import shap
+#+end_src
+*** Others
+#+begin_src python :results none
+from graeae import CountPercentage, EmbedHoloviews, EnvironmentLoader, Timer
+#+end_src
+** Set Up
+*** Table
+#+begin_src python :results none
+TABLE = partial(tabulate, tablefmt="orgtbl", showindex=False, headers="keys")
+#+end_src
+*** Plottting
+#+begin_src python :results none
+SLUG = "kaggle-intermediate-machine-learning-pipelines"
+OUTPUT_PATH = Path("../../files/posts/tutorials/")/SLUG
+if not OUTPUT_PATH.is_dir():
+    OUTPUT_PATH.mkdir()
+Embed = partial(EmbedHoloviews, folder_path=OUTPUT_PATH)
+Plot = Namespace(
+    height=800,
+    width=1000,
+)
+#+end_src
+*** The Timer
+#+begin_src python :results none
+TIMER = Timer()
+#+end_src
+*** Environment
+#+begin_src python :results none
+ENVIRONMENT = EnvironmentLoader()
+#+end_src
+*** The Data
+#+begin_src python :results none
+DATA_PATH = Path(ENVIRONMENT["HOUSE-PRICES-IOWA"]).expanduser()
+train_data = pandas.read_csv(
+    DATA_PATH/"train.csv", index_col="Id")
+
+test_data = pandas.read_csv(
+    DATA_PATH/"test.csv", index_col="Id"
+)
+X_test = test_data
+#+end_src
+*** Some Constants
+#+begin_src python :results none
+Data = Namespace(
+    target="SalePrice",
+    train_size=0.8,
+    test_size=0.2,
+    random_seed=0,
+)
+#+end_src
+** Setup The Data
+   Split up the target and features.
+#+begin_src python :results none
+assert not train_data[Data.target].hasnans
+y = train_data[Data.target]
+X = train_data.drop([Data.target], axis="columns")
+#+end_src
+
+#+begin_src python :results none
+X_train, X_validate, y_train, y_validate = train_test_split(
+    X, y,
+    train_size=Data.train_size, test_size=Data.test_size,
+    random_state=Data.random_seed)
+#+end_src
+
+*** Trim the columns
+#+begin_src python :results none
+# Select categorical columns with relatively low cardinality (convenient but arbitrary)
+categorical_columns = [column for column in X_train.columns if
+                       X_train[column].nunique() < 10 and 
+                       X_train[column].dtype == object]
+
+# Select numerical columns
+numerical_columns = [column for column in X_train.columns if 
+                     X_train[column].dtype in ['int64', 'float64']]
+
+# Keep selected columns only
+columns = categorical_columns + numerical_columns
+X_train = X_train[columns].copy()
+X_validate = X_validate[columns].copy()
+X_test = X_test[columns].copy()
+#+end_src
+* Middle
+** Preprocess Data and Train the Model
+   The missing numeric values will be filled in with a simple imputer. When the =strategy= is set to constant then it will fill missing values with a single value (which is 0 by default).
+
+#+begin_src python :results none
+numerical_transformer = SimpleImputer(strategy='constant')
+#+end_src
+
+Now the categorical data transformer. We'll use the most frequent value in any column with missing values to fill them in and the do one-hot encoding.
+
+#+begin_src python :results none
+categorical_transformer = Pipeline(steps=[
+    ('imputer', SimpleImputer(strategy='most_frequent')),
+    ('onehot', OneHotEncoder(handle_unknown='ignore'))
+])
+#+end_src
+
+Now we can bundle them together into a single transformer.
+#+begin_src python :results none
+preprocessor = ColumnTransformer(
+    transformers=[
+        ('num', numerical_transformer, numerical_columns),
+        ('cat', categorical_transformer, categorical_columns)
+    ])
+#+end_src
+
+*** Define The Model
+#+begin_src python :results none
+model = RandomForestRegressor(n_estimators=100, random_state=0)
+#+end_src
+*** Build the Pipeline
+#+begin_src python :results none
+pipeline = Pipeline(steps=[('preprocessor', preprocessor),
+                      ('model', model)
+                     ])
+#+end_src
+*** Fit the Model
+#+begin_src python :results none
+# Preprocessing of training data, fit model 
+pipeline.fit(X_train, y_train)
+#+end_src
+*** Score the Model
+#+begin_src python :results output :exports both
+preds = pipeline.predict(X_validate)
+
+print(f"MAE: {mean_absolute_error(y_validate, preds):,}")
+#+end_src
+
+#+RESULTS:
+: MAE: 17,861.780102739725
+
+** Improving the Performance
+#+begin_quote
+Now, it's your turn!  In the code cell below, define your own preprocessing steps and random forest model.  Fill in values for the following variables:
+ - =numerical_transformer=
+ - =categorical_transformer=
+ - =model=
+#+end_quote
+
+#+begin_src python :results none
+numerical_transformer = IterativeImputer(random_state=Data.random_seed)
+#+end_src
+
+I'll use the same categorical imputer.
+
+#+begin_src python :results none
+categorical_transformer = Pipeline(steps=[
+    ('imputer', SimpleImputer(strategy='most_frequent')),
+    ('onehot', OneHotEncoder(handle_unknown='ignore'))
+])
+#+end_src
+
+And now we bundle them together.
+#+begin_src python :results none
+preprocessor = ColumnTransformer(
+    transformers=[
+        ('numeric', numerical_transformer, numerical_columns),
+        ('categorical', categorical_transformer, categorical_columns)
+    ])
+#+end_src
+
+Now build and train the model.
+
+#+begin_src python :results none
+model = RandomForestRegressor(n_estimators=50, max_depth=60, random_state=0)
+pipeline = Pipeline(steps=[('preprocessor', preprocessor),
+                           ('model', model)
+                           ])
+pipeline.fit(X_train, y_train)
+#+end_src
+
+#+begin_src python :results output raw :exports both
+predictions = pipeline.predict(X_validate)
+
+print(f"MAE: {mean_absolute_error(y_validate, predictions):,}")
+#+end_src
+
+#+RESULTS:
+: MAE: 17,556.51404109589
+
+So we improved slightly, but we're still not doing as well as with the numeric only dataset.
+
+** SHAP
+#+begin_src python :results output :exports both
+with TIMER:
+    training = X_train[numerical_columns + categorical_columns]
+    data = preprocessor.fit_transform(training)
+    columns = (numerical_columns
+               + list(preprocessor.named_transformers_["categorical"]["onehot"].get_feature_names()))
+    data = pandas.DataFrame(
+        data,
+        columns=columns)
+    explainer = shap.TreeExplainer(model)
+    shap_values = explainer.shap_values(data)
+#+end_src
+
+#+RESULTS:
+: 2020-03-01 19:25:58,515 graeae.timers.timer start: Started: 2020-03-01 19:25:58.514631
+: Setting feature_perturbation = "tree_path_dependent" because no background data was given.
+: 2020-03-01 19:26:16,103 graeae.timers.timer end: Ended: 2020-03-01 19:26:16.103820
+: 2020-03-01 19:26:16,104 graeae.timers.timer end: Elapsed: 0:00:17.589189
+
+#+begin_src python :results output :exports both
+shap.summary_plot(shap_values, data)
+figure = pyplot.gcf()
+output = "shap_summary.png"
+
+figure.savefig(OUTPUT_PATH/output)
+print(f"[[file:{output}]]")
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+[[file:./.ob-jupyter/52fc9fa36e385cc6b1cc5a40b4505610a7dd6c65.png]]
+: [[file:shap_summary.png]]
+: <Figure size 432x288 with 0 Axes>
+:END:
+
+ [[file:shap_summary.png]]
+
+#+begin_src python :results none
+shap.initjs()
+html = shap.force_plot(explainer.expected_value, shap_values, data)
+output_file = "force_plot.html"
+output = OUTPUT_PATH/output_file
+with output.open("w") as writer:
+    shap.save_html(writer, html, False)
+
+print(f"""
+,#+begin_export html
+: <object type="text/html" data="{output_file}" style="width:100%" height=800>
+:   <p>Figure Missing</p>
+: </object>
+,#+end_export
+""")
+#+end_src
+
+ #+begin_export html
+ : <object type="text/html" data="force_plot.html" style="width:100%" height=800>
+ :   <p>Figure Missing</p>
+ : </object>
+ #+end_export
+ 
+* End

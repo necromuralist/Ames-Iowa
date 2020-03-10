@@ -1,0 +1,261 @@
+#+BEGIN_COMMENT
+.. title: Model Validation Exercise
+.. slug: model-validation-exercise
+.. date: 2020-02-17 21:55:00 UTC-08:00
+.. tags: tutorial,kaggle,validation
+.. category: Tutorial
+.. link: 
+.. description: Continuing the kaggle tutorial introducing machine learning.
+.. type: text
+.. status: 
+.. updated: 
+
+#+END_COMMENT
+#+OPTIONS: ^:{}
+#+TOC: headlines 
+#+PROPERTY: header-args :session /run/user/1000/jupyter/kernel-cf77f65a-87df-40aa-9100-1af7995cdc88.json
+* Beginning
+  This is the third part of kaggle's [[https://www.kaggle.com/learn/intro-to-machine-learning][Introduction to Machine Learning]] tutorial - Model Validation.
+** Imports
+*** Python
+#+begin_src python :results none
+from argparse import Namespace
+from datetime import datetime
+from functools import partial
+from pathlib import Path
+#+end_src
+*** PyPi
+#+begin_src python :results none
+from sklearn.metrics import mean_absolute_error
+from sklearn.model_selection import cross_val_score, train_test_split
+from sklearn.linear_model import ElasticNet, Lasso, LinearRegression, Ridge
+from sklearn.tree import DecisionTreeRegressor
+
+import hvplot.pandas
+import pandas
+#+end_src
+*** Others
+#+begin_src python :results none
+from graeae import EmbedHoloviews, EnvironmentLoader, Timer
+#+end_src
+** Set Up
+*** Plottting
+#+begin_src python :results none
+SLUG = "a-first-machine-learning-model"
+OUTPUT_PATH = Path("../../files/posts/tutorials/")/SLUG
+Embed = partial(EmbedHoloviews, folder_path=OUTPUT_PATH)
+Plot = Namespace(
+    height=800,
+    width=1000,
+)
+#+end_src
+*** The Timer
+#+begin_src python :results none
+TIMER = Timer()
+#+end_src
+*** Environment
+#+begin_src python :results none
+ENVIRONMENT = EnvironmentLoader()
+#+end_src
+*** The Data
+#+begin_src python :results none
+data = pandas.read_csv(
+    Path(ENVIRONMENT["HOUSE-PRICES-IOWA"]).expanduser()/"train.csv")
+#+end_src
+* Middle
+** Step 1: Specify Prediction Target
+Select the target variable, which corresponds to the sales price. Save this to a new variable called `y`. You'll need to print a list of the columns to find the name of the column you need.
+
+#+begin_src python :results output raw :exports both
+for column in sorted(data.columns):
+    print(f"- {column} ({data[column].dtype})")
+#+end_src
+
+#+RESULTS:
+#+begin_example
+- 1stFlrSF (int64)
+- 2ndFlrSF (int64)
+- 3SsnPorch (int64)
+- Alley (object)
+- BedroomAbvGr (int64)
+- BldgType (object)
+- BsmtCond (object)
+- BsmtExposure (object)
+- BsmtFinSF1 (int64)
+- BsmtFinSF2 (int64)
+- BsmtFinType1 (object)
+- BsmtFinType2 (object)
+- BsmtFullBath (int64)
+- BsmtHalfBath (int64)
+- BsmtQual (object)
+- BsmtUnfSF (int64)
+- CentralAir (object)
+- Condition1 (object)
+- Condition2 (object)
+- Electrical (object)
+- EnclosedPorch (int64)
+- ExterCond (object)
+- ExterQual (object)
+- Exterior1st (object)
+- Exterior2nd (object)
+- Fence (object)
+- FireplaceQu (object)
+- Fireplaces (int64)
+- Foundation (object)
+- FullBath (int64)
+- Functional (object)
+- GarageArea (int64)
+- GarageCars (int64)
+- GarageCond (object)
+- GarageFinish (object)
+- GarageQual (object)
+- GarageType (object)
+- GarageYrBlt (float64)
+- GrLivArea (int64)
+- HalfBath (int64)
+- Heating (object)
+- HeatingQC (object)
+- HouseStyle (object)
+- Id (int64)
+- KitchenAbvGr (int64)
+- KitchenQual (object)
+- LandContour (object)
+- LandSlope (object)
+- LotArea (int64)
+- LotConfig (object)
+- LotFrontage (float64)
+- LotShape (object)
+- LowQualFinSF (int64)
+- MSSubClass (int64)
+- MSZoning (object)
+- MasVnrArea (float64)
+- MasVnrType (object)
+- MiscFeature (object)
+- MiscVal (int64)
+- MoSold (int64)
+- Neighborhood (object)
+- OpenPorchSF (int64)
+- OverallCond (int64)
+- OverallQual (int64)
+- PavedDrive (object)
+- PoolArea (int64)
+- PoolQC (object)
+- RoofMatl (object)
+- RoofStyle (object)
+- SaleCondition (object)
+- SalePrice (int64)
+- SaleType (object)
+- ScreenPorch (int64)
+- Street (object)
+- TotRmsAbvGrd (int64)
+- TotalBsmtSF (int64)
+- Utilities (object)
+- WoodDeckSF (int64)
+- YearBuilt (int64)
+- YearRemodAdd (int64)
+- YrSold (int64)
+#+end_example
+
+That is a huge number of features.
+
+Our target is /SalePrice/.
+
+#+begin_src python :results none
+Y = data.SalePrice
+#+end_src
+** Step 2: Create X
+#+begin_quote
+ Now you will create a DataFrame called `X` holding the predictive features.
+ 
+ Since you want only some columns from the original data, you'll first create a list with the names of the columns you want in `X`.
+ 
+ You'll use just the following columns in the list (you can copy and paste the whole list to save some typing, though you'll still need to add quotes):
+     * LotArea
+     * YearBuilt
+     * 1stFlrSF
+     * 2ndFlrSF
+     * FullBath
+     * BedroomAbvGr
+     * TotRmsAbvGrd
+#+end_quote
+
+#+begin_src python :results none
+FEATURES = [
+    "LotArea",
+    "YearBuilt",
+    "1stFlrSF",
+    "2ndFlrSF",
+    "FullBath",
+    "BedroomAbvGr",
+    "TotRmsAbvGrd",
+]
+X = data[FEATURES]
+#+end_src
+
+Split up the data into training and validation sets.
+
+#+begin_src python :results none
+x_train, x_validate, y_train, y_validate = train_test_split(X, Y, random_state=1)
+#+end_src
+** Step 3: Specify and Fit Model
+*** A Linear Regression Model
+    As a baseline, I'll fit a simple [[https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.LinearRegression.html][Linear Regression]] (ordinary-least-squares) model.
+#+begin_src python :results output :exports both
+regression = LinearRegression()
+scores = cross_val_score(regression, x_train, y_train, cv=5)
+print(f"{scores.mean():0.2f} (+/- {2 * scores.std():0.2f})")
+regression = regression.fit(x_train, y_train)
+print(f"Training R^2: {regression.score(x_train, y_train): 0.2f}")
+print(f"Validation R^2: {regression.score(x_validate, y_validate):0.2f}")
+#+end_src
+
+#+RESULTS:
+: 0.66 (+/- 0.17)
+: Training R^2:  0.68
+: Validation R^2: 0.77
+
+*** Decision Tree
+
+#+begin_quote
+Create a =DecisionTreeRegressor= and save it as =iowa_model=. Ensure you've done the relevant import from sklearn to run this command.
+
+Then fit the model you just created using the data in =X= and =y= that you saved above.
+#+end_quote
+#+begin_src python :results output :exports both
+tree = DecisionTreeRegressor()
+scores = cross_val_score(tree, x_train, y_train, cv=5)
+print(f"{scores.mean():0.2f} (+/- {2 * scores.std():0.2f})")
+
+tree = tree.fit(x_train, y_train)
+print(f"Training R^2: {tree.score(x_train, y_train): 0.2f}")
+print(f"Validation R^2: {tree.score(x_validate, y_validate):0.2f}")
+#+end_src
+
+#+RESULTS:
+: 0.53 (+/- 0.32)
+: Training R^2:  1.00
+: Validation R^2: 0.73
+
+So our linear regression actually does better than the tree does. It looks like the tree might be overfitting on the training data.
+** Make Some Predictions
+#+begin_src python :results none
+tree_predict = tree.predict(x_validate)
+regression_predict = regression.predict(x_validate)
+#+end_src
+** Step 4: Calculate the Mean Absolute Error in Validation Data
+#+begin_src python :results output :exports both
+tree_mae = mean_absolute_error(y_true=y_validate, y_pred=tree_predict)
+regression_mae = mean_absolute_error(y_true=y_validate, y_pred=regression_predict)
+
+print(f"Tree MAE: {tree_mae: 0.2f}")
+print(f"Regression MAE: {regression_mae: 0.2f}")
+#+end_src
+
+#+RESULTS:
+: Tree MAE:  29853.86
+: Regression MAE:  27228.88
+
+The tree's error is a little higher than the regression line's.
+
+* End
+Next up is underfitting and overfitting.
