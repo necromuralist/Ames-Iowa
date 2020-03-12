@@ -19,6 +19,7 @@
 %autoreload 2
 #+END_SRC
 * The Ordinary World
+  The full dataset is available from the [[http://jse.amstat.org/contents_2011.htm][Journal of Statistics Education]] ([[https://ww2.amstat.org/publications/jse/v19n3/decock/AmesHousing.txt][The data]], and the [[https://ww2.amstat.org/publications/jse/v19n3/decock/DataDocumentation.txt][Data Documentation]]).
 ** Imports
 *** Python
 #+begin_src python :results none
