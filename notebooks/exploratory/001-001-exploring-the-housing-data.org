@@ -13,7 +13,7 @@
 #+END_COMMENT
 #+OPTIONS: ^:{}
 #+TOC: headlines 5
-#+PROPERTY: header-args :session /home/brunhilde/.local/share/jupyter/runtime/kernel-dfb5af11-1602-4e22-89f1-44997faf720e.json
+#+PROPERTY: header-args :session /home/athena/.local/share/jupyter/runtime/kernel-8e7d3ef5-8f85-4fe6-9a4e-5efd8d6786e0.json
 #+BEGIN_SRC python :results none :exports none
 %load_ext autoreload
 %autoreload 2
@@ -76,7 +76,8 @@ print(f"Categorical Columns: {len(categorical)}")
 #+RESULTS:
 : Numeric Columns: 37
 : Categorical Columns: 43
-
+*** BoxPlot of Sales
+    Here's a boxplot of the Sales Prices.
 #+begin_src python :results none
 plot = data.y.hvplot.box().opts(title="Sales Price Distribution",
                                 width=Plot.width,
@@ -94,6 +95,8 @@ print(source)
 :   <p>Figure Missing</p>
 : </object>
 #+end_export
+
+It appears that the data is right-skewed, with a fair amount of "outliers" on the high-end of the price-range.
 
 #+begin_src python :results none
 mean_line = holoviews.VLine(data.y.mean(), label="mean")
@@ -116,6 +119,8 @@ print(source)
 : </object>
 #+end_export
 
+I don't know why the labels don't show up, but the vertical lines are, in order, the Mode, Median, and Mean.
+
 #+begin_src python :results output raw :exports both
 print("|Name | Value|")
 print("|-+-|")
@@ -125,11 +130,13 @@ print(f"|Mode|{data.y.mode().iloc[0]:,}|")
 #+end_src
 
 #+RESULTS:
-|Name | Value|
-|-+-|
-|Mean|180,921.19589041095|
-|Median|163,000.0|
-|Mode|140,000|
+: |Name | Value|
+: |-+-|
+: |Mean|180,921.19589041095|
+: |Median|163,000.0|
+: |Mode|140,000|
+** Dummy Predictions
+   As a baseline - what happens if you choose a measure of central tendency as your predictor?
 
 #+begin_src python :results none
 def dummy(strategy:str="mean", constant=None):
@@ -141,29 +148,39 @@ def dummy(strategy:str="mean", constant=None):
     predictions = regressor.predict(data.x_validate)
     print(f"Mean Absolute Error for {strategy} predictions: {mean_absolute_error(data.y_validate, predictions):,}")
 #+end_src
-** Mean Regressor
+*** Mean Regressor
 #+begin_src python :results output :exports both
 dummy("mean")
 #+end_src
 
 #+RESULTS:
+: Mean Absolute Error for mean predictions: 57,046.67787108275
 Mean Absolute Error for mean predictions: 57,046.67787108275
 
-** Median Regressor
+
+*** Median Regressor
 #+begin_src python :results output :exports both
 dummy("median")
 #+end_src
 
 #+RESULTS:
+: Mean Absolute Error for median predictions: 55,555.739726027394
 Mean Absolute Error for median predictions: 55,555.739726027394
 
-** Mode Regressor
+*** Mode Regressor
 
 #+begin_src python :results output :exports both
 dummy("mode", constant=data.y.mode().iloc[0])
 #+end_src
 
 #+RESULTS:
+: Mean Absolute Error for mode predictions: 58,944.11643835616
 Mean Absolute Error for mode predictions: 58,944.11643835616
 
+It appears that the median had the lowest error.
+** Median Sales Price
+
 * The Return
+** Sources
+   - De Cock D. Ames, Iowa: Alternative to the Boston housing data as an end of semester regression project. Journal of Statistics Education. 2011 Nov 1;19(3). [[http://jse.amstat.org/v19n3/decock.pdf][Link to PDF]]
+
