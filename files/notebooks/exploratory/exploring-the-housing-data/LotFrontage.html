@@ -1,0 +1,833 @@
+
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-1.4.0.min.js" type="text/javascript"></script>
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-widgets-1.4.0.min.js" type="text/javascript"></script>
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-tables-1.4.0.min.js" type="text/javascript"></script>
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-gl-1.4.0.min.js" type="text/javascript"></script>
+<script src="https://code.jquery.com/jquery-2.1.4.min.js" type="text/javascript"></script>
+<script src="https://code.jquery.com/ui/1.10.4/jquery-ui.min.js" type="text/javascript"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.1.20/require.min.js" type="text/javascript"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/underscore.js/1.8.3/underscore-min.js" type="text/javascript"></script>
+<script type="text/javascript">function HoloViewsWidget() {
+}
+
+HoloViewsWidget.prototype.init_slider = function(init_val){
+  if(this.load_json) {
+    this.from_json()
+  } else {
+    this.update_cache();
+  }
+}
+
+HoloViewsWidget.prototype.populate_cache = function(idx){
+  this.cache[idx].innerHTML = this.frames[idx];
+  if (this.embed) {
+    delete this.frames[idx];
+  }
+}
+
+HoloViewsWidget.prototype.process_error = function(msg){
+}
+
+HoloViewsWidget.prototype.from_json = function() {
+  var data_url = this.json_path + this.id + '.json';
+  $.getJSON(data_url, $.proxy(function(json_data) {
+    this.frames = json_data;
+    this.update_cache();
+    this.update(0);
+  }, this));
+}
+
+HoloViewsWidget.prototype.dynamic_update = function(current){
+  if (current === undefined) {
+    return
+  }
+  this.current = current;
+  if (this.comm) {
+    var msg = {comm_id: this.id+'_client', content: current}
+    this.comm.send(msg);
+  }
+}
+
+HoloViewsWidget.prototype.update_cache = function(force){
+  var frame_len = Object.keys(this.frames).length;
+  for (var i=0; i<frame_len; i++) {
+    if(!this.load_json || this.dynamic)  {
+      var frame = Object.keys(this.frames)[i];
+    } else {
+      var frame = i;
+    }
+    if(!(frame in this.cache) || force) {
+      if ((frame in this.cache) && force) { this.cache[frame].remove() }
+      var div = document.createElement("div");
+      var parent = document.getElementById("_anim_img"+this.id);
+      div.style.display = "none";
+      parent.appendChild(div)
+      this.cache[frame] = div;
+      var cache_id = "_anim_img"+this.id+"_"+frame;
+      this.populate_cache(frame);
+    }
+  }
+}
+
+HoloViewsWidget.prototype.update = function(current){
+  if(current in this.cache) {
+    for (var index in this.cache) {
+      this.cache[index].style.display = "none";
+    }
+    this.cache[current].style.display = "";
+    this.wait = false;
+  }
+}
+
+HoloViewsWidget.prototype.init_comms = function() {
+  var that = this
+  HoloViews.comm_manager.register_target(this.plot_id, this.id, function (msg) { that.msg_handler(msg) })
+  if (!this.cached || this.dynamic) {
+    function ack_callback(msg) {
+      var msg = msg.metadata;
+      var comm_id = msg.comm_id;
+      var comm_status = HoloViews.comm_status[comm_id];
+      if (that.queue.length > 0) {
+        that.time = Date.now();
+        that.dynamic_update(that.queue[that.queue.length-1]);
+        that.queue = [];
+      } else {
+        that.wait = false;
+      }
+      if ((msg.msg_type == "Ready") && msg.content) {
+        console.log("Python callback returned following output:", msg.content);
+      } else if (msg.msg_type == "Error") {
+        console.log("Python failed with the following traceback:", msg.traceback)
+      }
+    }
+    var comm = HoloViews.comm_manager.get_client_comm(this.plot_id, this.id+'_client', ack_callback);
+    return comm
+  }
+}
+
+HoloViewsWidget.prototype.msg_handler = function(msg) {
+  var metadata = msg.metadata;
+  if ((metadata.msg_type == "Ready")) {
+    if (metadata.content) {
+      console.log("Python callback returned following output:", metadata.content);
+    }
+	return;
+  } else if (metadata.msg_type == "Error") {
+    console.log("Python failed with the following traceback:", metadata.traceback)
+    return
+  }
+  this.process_msg(msg)
+}
+
+HoloViewsWidget.prototype.process_msg = function(msg) {
+}
+
+function SelectionWidget(frames, id, slider_ids, keyMap, dim_vals, notFound, load_json, mode, cached, json_path, dynamic, plot_id){
+  this.frames = frames;
+  this.id = id;
+  this.plot_id = plot_id;
+  this.slider_ids = slider_ids;
+  this.keyMap = keyMap
+  this.current_frame = 0;
+  this.current_vals = dim_vals;
+  this.load_json = load_json;
+  this.mode = mode;
+  this.notFound = notFound;
+  this.cached = cached;
+  this.dynamic = dynamic;
+  this.cache = {};
+  this.json_path = json_path;
+  this.init_slider(this.current_vals[0]);
+  this.queue = [];
+  this.wait = false;
+  if (!this.cached || this.dynamic) {
+    this.comm = this.init_comms();
+  }
+}
+
+SelectionWidget.prototype = new HoloViewsWidget;
+
+
+SelectionWidget.prototype.get_key = function(current_vals) {
+  var key = "(";
+  for (var i=0; i<this.slider_ids.length; i++)
+  {
+    var val = this.current_vals[i];
+    if (!(typeof val === 'string')) {
+      if (val % 1 === 0) { val = val.toFixed(1); }
+      else { val = val.toFixed(10); val = val.slice(0, val.length-1);}
+    }
+    key += "'" + val + "'";
+    if(i != this.slider_ids.length-1) { key += ', ';}
+    else if(this.slider_ids.length == 1) { key += ',';}
+  }
+  key += ")";
+  return this.keyMap[key];
+}
+
+SelectionWidget.prototype.set_frame = function(dim_val, dim_idx){
+  this.current_vals[dim_idx] = dim_val;
+  var key = this.current_vals;
+  if (!this.dynamic) {
+    key = this.get_key(key)
+  }
+  if (this.dynamic || !this.cached) {
+    if ((this.time !== undefined) && ((this.wait) && ((this.time + 10000) > Date.now()))) {
+      this.queue.push(key);
+      return
+    }
+    this.queue = [];
+    this.time = Date.now();
+    this.current_frame = key;
+    this.wait = true;
+    this.dynamic_update(key)
+  } else if (key !== undefined) {
+    this.update(key)
+  }
+}
+
+
+/* Define the ScrubberWidget class */
+function ScrubberWidget(frames, num_frames, id, interval, load_json, mode, cached, json_path, dynamic, plot_id){
+  this.slider_id = "_anim_slider" + id;
+  this.loop_select_id = "_anim_loop_select" + id;
+  this.id = id;
+  this.plot_id = plot_id;
+  this.interval = interval;
+  this.current_frame = 0;
+  this.direction = 0;
+  this.dynamic = dynamic;
+  this.timer = null;
+  this.load_json = load_json;
+  this.mode = mode;
+  this.cached = cached;
+  this.frames = frames;
+  this.cache = {};
+  this.length = num_frames;
+  this.json_path = json_path;
+  document.getElementById(this.slider_id).max = this.length - 1;
+  this.init_slider(0);
+  this.wait = false;
+  this.queue = [];
+  if (!this.cached || this.dynamic) {
+    this.comm = this.init_comms()
+  }
+}
+
+ScrubberWidget.prototype = new HoloViewsWidget;
+
+ScrubberWidget.prototype.set_frame = function(frame){
+  this.current_frame = frame;
+  var widget = document.getElementById(this.slider_id);
+  if (widget === null) {
+    this.pause_animation();
+    return
+  }
+  widget.value = this.current_frame;
+  if (this.dynamic || !this.cached) {
+    if ((this.time !== undefined) && ((this.wait) && ((this.time + 10000) > Date.now()))) {
+      this.queue.push(frame);
+      return
+    }
+    this.queue = [];
+    this.time = Date.now();
+    this.wait = true;
+    this.dynamic_update(frame)
+  } else {
+    this.update(frame)
+  }
+}
+
+ScrubberWidget.prototype.get_loop_state = function(){
+  var button_group = document[this.loop_select_id].state;
+  for (var i = 0; i < button_group.length; i++) {
+    var button = button_group[i];
+    if (button.checked) {
+      return button.value;
+    }
+  }
+  return undefined;
+}
+
+
+ScrubberWidget.prototype.next_frame = function() {
+  this.set_frame(Math.min(this.length - 1, this.current_frame + 1));
+}
+
+ScrubberWidget.prototype.previous_frame = function() {
+  this.set_frame(Math.max(0, this.current_frame - 1));
+}
+
+ScrubberWidget.prototype.first_frame = function() {
+  this.set_frame(0);
+}
+
+ScrubberWidget.prototype.last_frame = function() {
+  this.set_frame(this.length - 1);
+}
+
+ScrubberWidget.prototype.slower = function() {
+  this.interval /= 0.7;
+  if(this.direction > 0){this.play_animation();}
+  else if(this.direction < 0){this.reverse_animation();}
+}
+
+ScrubberWidget.prototype.faster = function() {
+  this.interval *= 0.7;
+  if(this.direction > 0){this.play_animation();}
+  else if(this.direction < 0){this.reverse_animation();}
+}
+
+ScrubberWidget.prototype.anim_step_forward = function() {
+  if(this.current_frame < this.length - 1){
+    this.next_frame();
+  }else{
+    var loop_state = this.get_loop_state();
+    if(loop_state == "loop"){
+      this.first_frame();
+    }else if(loop_state == "reflect"){
+      this.last_frame();
+      this.reverse_animation();
+    }else{
+      this.pause_animation();
+      this.last_frame();
+    }
+  }
+}
+
+ScrubberWidget.prototype.anim_step_reverse = function() {
+  if(this.current_frame > 0){
+    this.previous_frame();
+  } else {
+    var loop_state = this.get_loop_state();
+    if(loop_state == "loop"){
+      this.last_frame();
+    }else if(loop_state == "reflect"){
+      this.first_frame();
+      this.play_animation();
+    }else{
+      this.pause_animation();
+      this.first_frame();
+    }
+  }
+}
+
+ScrubberWidget.prototype.pause_animation = function() {
+  this.direction = 0;
+  if (this.timer){
+    clearInterval(this.timer);
+    this.timer = null;
+  }
+}
+
+ScrubberWidget.prototype.play_animation = function() {
+  this.pause_animation();
+  this.direction = 1;
+  var t = this;
+  if (!this.timer) this.timer = setInterval(function(){t.anim_step_forward();}, this.interval);
+}
+
+ScrubberWidget.prototype.reverse_animation = function() {
+  this.pause_animation();
+  this.direction = -1;
+  var t = this;
+  if (!this.timer) this.timer = setInterval(function(){t.anim_step_reverse();}, this.interval);
+}
+
+function extend(destination, source) {
+  for (var k in source) {
+    if (source.hasOwnProperty(k)) {
+      destination[k] = source[k];
+    }
+  }
+  return destination;
+}
+
+function update_widget(widget, values) {
+  if (widget.hasClass("ui-slider")) {
+    widget.slider('option', {
+      min: 0,
+      max: values.length-1,
+      dim_vals: values,
+      value: 0,
+      dim_labels: values
+    })
+    widget.slider('option', 'slide').call(widget, event, {value: 0})
+  } else {
+    widget.empty();
+    for (var i=0; i<values.length; i++){
+      widget.append($("<option>", {
+        value: i,
+        text: values[i]
+      }))
+    };
+    widget.data('values', values);
+    widget.data('value', 0);
+    widget.trigger("change");
+  };
+}
+
+function init_slider(id, plot_id, dim, values, next_vals, labels, dynamic, step, value, next_dim,
+                     dim_idx, delay, jQueryUI_CDN, UNDERSCORE_CDN) {
+  // Slider JS Block START
+  function loadcssfile(filename){
+    var fileref=document.createElement("link")
+    fileref.setAttribute("rel", "stylesheet")
+    fileref.setAttribute("type", "text/css")
+    fileref.setAttribute("href", filename)
+    document.getElementsByTagName("head")[0].appendChild(fileref)
+  }
+  loadcssfile("https://code.jquery.com/ui/1.10.4/themes/smoothness/jquery-ui.css");
+  /* Check if jQuery and jQueryUI have been loaded
+     otherwise load with require.js */
+  var jQuery = window.jQuery,
+    // check for old versions of jQuery
+    oldjQuery = jQuery && !!jQuery.fn.jquery.match(/^1\.[0-4](\.|$)/),
+    jquery_path = '',
+    paths = {},
+    noConflict;
+  var jQueryUI = jQuery.ui;
+  // check for jQuery
+  if (!jQuery || oldjQuery) {
+    // load if it's not available or doesn't meet min standards
+    paths.jQuery = jQuery;
+    noConflict = !!oldjQuery;
+  } else {
+    // register the current jQuery
+    define('jquery', [], function() { return jQuery; });
+  }
+  if (!jQueryUI) {
+    paths.jQueryUI = jQueryUI_CDN.slice(null, -3);
+  } else {
+    define('jQueryUI', [], function() { return jQuery.ui; });
+  }
+  paths.underscore = UNDERSCORE_CDN.slice(null, -3);
+  var jquery_require = {
+    paths: paths,
+    shim: {
+      "jQueryUI": {
+        exports:"$",
+        deps: ['jquery']
+      },
+      "underscore": {
+        exports: '_'
+      }
+    }
+  }
+  require.config(jquery_require);
+  require(["jQueryUI", "underscore"], function(jUI, _){
+    if (noConflict) $.noConflict(true);
+    var vals = values;
+    if (dynamic && vals.constructor === Array) {
+      var default_value = parseFloat(value);
+      var min = parseFloat(vals[0]);
+      var max = parseFloat(vals[vals.length-1]);
+      var wstep = step;
+      var wlabels = [default_value];
+      var init_label = default_value;
+    } else {
+      var min = 0;
+      if (dynamic) {
+        var max = Object.keys(vals).length - 1;
+        var init_label = labels[value];
+        var default_value = values[value];
+      } else {
+        var max = vals.length - 1;
+        var init_label = labels[value];
+        var default_value = value;
+      }
+      var wstep = 1;
+      var wlabels = labels;
+    }
+    function adjustFontSize(text) {
+      var width_ratio = (text.parent().width()/8)/text.val().length;
+      var size = Math.min(0.9, Math.max(0.6, width_ratio))+'em';
+      text.css('font-size', size);
+    }
+    var slider = $('#_anim_widget'+id+'_'+dim);
+    slider.slider({
+      animate: "fast",
+      min: min,
+      max: max,
+      step: wstep,
+      value: default_value,
+      dim_vals: vals,
+      dim_labels: wlabels,
+      next_vals: next_vals,
+      slide: function(event, ui) {
+        var vals = slider.slider("option", "dim_vals");
+        var next_vals = slider.slider("option", "next_vals");
+        var dlabels = slider.slider("option", "dim_labels");
+        if (dynamic) {
+          var dim_val = ui.value;
+          if (vals.constructor === Array) {
+            var label = ui.value;
+          } else {
+            var label = dlabels[ui.value];
+          }
+        } else {
+          var dim_val = vals[ui.value];
+          var label = dlabels[ui.value];
+        }
+        var text = $('#textInput'+id+'_'+dim);
+        text.val(label);
+        adjustFontSize(text);
+        HoloViews.index[plot_id].set_frame(dim_val, dim_idx);
+        if (Object.keys(next_vals).length > 0) {
+          var new_vals = next_vals[dim_val];
+          var next_widget = $('#_anim_widget'+id+'_'+next_dim);
+          update_widget(next_widget, new_vals);
+        }
+      }
+    });
+    slider.keypress(function(event) {
+      if (event.which == 80 || event.which == 112) {
+        var start = slider.slider("option", "value");
+        var stop =  slider.slider("option", "max");
+        for (var i=start; i<=stop; i++) {
+          var delay = i*delay;
+          $.proxy(function doSetTimeout(i) { setTimeout($.proxy(function() {
+            var val = {value:i};
+            slider.slider('value',i);
+            slider.slider("option", "slide")(null, val);
+          }, slider), delay);}, slider)(i);
+        }
+      }
+      if (event.which == 82 || event.which == 114) {
+        var start = slider.slider("option", "value");
+        var stop =  slider.slider("option", "min");
+        var count = 0;
+        for (var i=start; i>=stop; i--) {
+          var delay = count*delay;
+          count = count + 1;
+          $.proxy(function doSetTimeout(i) { setTimeout($.proxy(function() {
+            var val = {value:i};
+            slider.slider('value',i);
+            slider.slider("option", "slide")(null, val);
+          }, slider), delay);}, slider)(i);
+        }
+      }
+    });
+    var textInput = $('#textInput'+id+'_'+dim)
+    textInput.val(init_label);
+    adjustFontSize(textInput);
+  });
+}
+
+function init_dropdown(id, plot_id, dim, vals, value, next_vals, labels, next_dim, dim_idx, dynamic) {
+  var widget = $("#_anim_widget"+id+'_'+dim);
+  widget.data('values', vals)
+  for (var i=0; i<vals.length; i++){
+    if (dynamic) {
+      var val = vals[i];
+    } else {
+      var val = i;
+    }
+    widget.append($("<option>", {
+      value: val,
+      text: labels[i]
+    }));
+  };
+  widget.data("next_vals", next_vals);
+  widget.val(value);
+  widget.on('change', function(event, ui) {
+    if (dynamic) {
+      var dim_val = parseInt(this.value);
+    } else {
+      var dim_val = $.data(this, 'values')[this.value];
+    }
+    var next_vals = $.data(this, "next_vals");
+    if (Object.keys(next_vals).length > 0) {
+      var new_vals = next_vals[dim_val];
+      var next_widget = $('#_anim_widget'+id+'_'+next_dim);
+      update_widget(next_widget, new_vals);
+    }
+    var widgets = HoloViews.index[plot_id]
+    if (widgets) {
+      widgets.set_frame(dim_val, dim_idx);
+    }
+  });
+}
+
+
+if (window.HoloViews === undefined) {
+  window.HoloViews = {}
+  window.PyViz = window.HoloViews
+} else if (window.PyViz === undefined) {
+  window.PyViz = window.HoloViews
+}
+
+
+var _namespace = {
+  init_slider: init_slider,
+  init_dropdown: init_dropdown,
+  comms: {},
+  comm_status: {},
+  index: {},
+  plot_index: {},
+  kernels: {},
+  receivers: {}
+}
+
+for (var k in _namespace) {
+  if (!(k in window.HoloViews)) {
+    window.HoloViews[k] = _namespace[k];
+  }
+}
+
+// Define Bokeh specific subclasses
+function BokehSelectionWidget() {
+  SelectionWidget.apply(this, arguments);
+}
+
+function BokehScrubberWidget() {
+  ScrubberWidget.apply(this, arguments);
+}
+
+// Let them inherit from the baseclasses
+BokehSelectionWidget.prototype = Object.create(SelectionWidget.prototype);
+BokehScrubberWidget.prototype = Object.create(ScrubberWidget.prototype);
+
+// Define methods to override on widgets
+var BokehMethods = {
+  update_cache : function(){
+    for (var index in this.frames) {
+      this.frames[index] = JSON.parse(this.frames[index]);
+    }
+  },
+  update : function(current){
+    if (current === undefined) {
+      return;
+    }
+    var data = this.frames[current];
+    if (data !== undefined) {
+      if (data.root in HoloViews.plot_index) {
+        var doc = HoloViews.plot_index[data.root].model.document;
+      } else {
+        var doc = Bokeh.index[data.root].model.document;
+      }
+      doc.apply_json_patch(data.content);
+    }
+  },
+  init_comms: function() {
+    if (Bokeh.protocol !== undefined) {
+      this.receiver = new Bokeh.protocol.Receiver()
+    } else {
+      this.receiver = null;
+    }
+    return HoloViewsWidget.prototype.init_comms.call(this);
+  },
+  process_msg : function(msg) {
+    if (this.plot_id in HoloViews.plot_index) {
+      var doc = HoloViews.plot_index[this.plot_id].model.document;
+    } else {
+      var doc = Bokeh.index[this.plot_id].model.document;
+    }
+    if (this.receiver === null) { return }
+    var receiver = this.receiver;
+    if (msg.buffers.length > 0) {
+      receiver.consume(msg.buffers[0].buffer)
+    } else {
+      receiver.consume(msg.content.data)
+    }
+    const comm_msg = receiver.message;
+    if ((comm_msg != null) && (doc != null)) {
+      doc.apply_json_patch(comm_msg.content, comm_msg.buffers)
+    }
+  }
+}
+
+// Extend Bokeh widgets with backend specific methods
+extend(BokehSelectionWidget.prototype, BokehMethods);
+extend(BokehScrubberWidget.prototype, BokehMethods);
+
+window.HoloViews.BokehSelectionWidget = BokehSelectionWidget
+window.HoloViews.BokehScrubberWidget = BokehScrubberWidget
+</script>
+<script type="text/javascript">
+    function JupyterCommManager() {
+    }
+
+    JupyterCommManager.prototype.register_target = function(plot_id, comm_id, msg_handler) {
+      if (window.comm_manager || ((window.Jupyter !== undefined) && (Jupyter.notebook.kernel != null))) {
+        var comm_manager = window.comm_manager || Jupyter.notebook.kernel.comm_manager;
+        comm_manager.register_target(comm_id, function(comm) {
+          comm.on_msg(msg_handler);
+        });
+      } else if ((plot_id in window.PyViz.kernels) && (window.PyViz.kernels[plot_id])) {
+        window.PyViz.kernels[plot_id].registerCommTarget(comm_id, function(comm) {
+          comm.onMsg = msg_handler;
+        });
+      }
+    }
+
+    JupyterCommManager.prototype.get_client_comm = function(plot_id, comm_id, msg_handler) {
+      if (comm_id in window.PyViz.comms) {
+        return window.PyViz.comms[comm_id];
+      } else if (window.comm_manager || ((window.Jupyter !== undefined) && (Jupyter.notebook.kernel != null))) {
+        var comm_manager = window.comm_manager || Jupyter.notebook.kernel.comm_manager;
+        var comm = comm_manager.new_comm(comm_id, {}, {}, {}, comm_id);
+        if (msg_handler) {
+          comm.on_msg(msg_handler);
+        }
+      } else if ((plot_id in window.PyViz.kernels) && (window.PyViz.kernels[plot_id])) {
+        var comm = window.PyViz.kernels[plot_id].connectToComm(comm_id);
+        comm.open();
+        if (msg_handler) {
+          comm.onMsg = msg_handler;
+        }
+      }
+
+      window.PyViz.comms[comm_id] = comm;
+      return comm;
+    }
+
+    window.PyViz.comm_manager = new JupyterCommManager();
+    </script>
+
+<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/css/bootstrap.min.css">
+<link rel="stylesheet" href="https://code.jquery.com/ui/1.10.4/themes/smoothness/jquery-ui.css">
+<style>div.bk-hbox {
+    display: flex;
+    justify-content: center;
+}
+
+div.bk-hbox div.bk-plot {
+    padding: 8px;
+}
+
+div.bk-hbox div.bk-data-table {
+    padding: 20px;
+}
+
+div.hololayout {
+  display: flex;
+  align-items: center;
+  margin: 0;
+}
+
+div.holoframe {
+  width: 75%;
+}
+
+div.holowell {
+  display: flex;
+  align-items: center;
+}
+
+form.holoform {
+  background-color: #fafafa;
+  border-radius: 5px;
+  overflow: hidden;
+  padding-left: 0.8em;
+  padding-right: 0.8em;
+  padding-top: 0.4em;
+  padding-bottom: 0.4em;
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.05);
+  margin-bottom: 20px;
+  border: 1px solid #e3e3e3;
+}
+
+div.holowidgets {
+  padding-right: 0;
+  width: 25%;
+}
+
+div.holoslider {
+  min-height: 0 !important;
+  height: 0.8em;
+  width: 100%;
+}
+
+div.holoformgroup {
+  padding-top: 0.5em;
+  margin-bottom: 0.5em;
+}
+
+div.hologroup {
+  padding-left: 0;
+  padding-right: 0.8em;
+  width: 100%;
+}
+
+.holoselect {
+  width: 92%;
+  margin-left: 0;
+  margin-right: 0;
+}
+
+.holotext {
+  padding-left:  0.5em;
+  padding-right: 0;
+  width: 100%;
+}
+
+.holowidgets .ui-resizable-se {
+  visibility: hidden
+}
+
+.holoframe > .ui-resizable-se {
+  visibility: hidden
+}
+
+.holowidgets .ui-resizable-s {
+  visibility: hidden
+}
+
+
+/* CSS rules for noUISlider based slider used by JupyterLab extension  */
+
+.noUi-handle {
+  width: 20px !important;
+  height: 20px !important;
+  left: -5px !important;
+  top: -5px !important;
+}
+
+.noUi-handle:before, .noUi-handle:after {
+  visibility: hidden;
+  height: 0px;
+}
+
+.noUi-target {
+  margin-left: 0.5em;
+  margin-right: 0.5em;
+}
+</style><div style='display: table; margin: 0 auto;'>
+
+
+
+
+
+
+  <div class="bk-root" id="68dc4251-125b-4db9-bc3e-231df27310db" data-root-id="47466"></div>
+
+<script type="text/javascript">
+  (function(root) {
+  function embed_document(root) {
+    
+  var docs_json = {"ef230365-87e9-4d2e-a179-f4756a73ae65":{"roots":{"references":[{"attributes":{"align":null,"below":[{"id":"47475","type":"LinearAxis"}],"center":[{"id":"47479","type":"Grid"},{"id":"47484","type":"Grid"}],"left":[{"id":"47480","type":"LinearAxis"}],"margin":null,"min_border_bottom":10,"min_border_left":10,"min_border_right":10,"min_border_top":10,"plot_height":800,"plot_width":1000,"renderers":[{"id":"47503","type":"GlyphRenderer"}],"sizing_mode":"fixed","title":{"id":"47467","type":"Title"},"toolbar":{"id":"47490","type":"Toolbar"},"x_range":{"id":"47463","type":"Range1d"},"x_scale":{"id":"47471","type":"LinearScale"},"y_range":{"id":"47464","type":"Range1d"},"y_scale":{"id":"47473","type":"LinearScale"}},"id":"47466","subtype":"Figure","type":"Plot"},{"attributes":{"active_drag":"auto","active_inspect":"auto","active_multi":null,"active_scroll":"auto","active_tap":"auto","tools":[{"id":"47465","type":"HoverTool"},{"id":"47485","type":"SaveTool"},{"id":"47486","type":"PanTool"},{"id":"47487","type":"WheelZoomTool"},{"id":"47488","type":"BoxZoomTool"},{"id":"47489","type":"ResetTool"}]},"id":"47490","type":"Toolbar"},{"attributes":{"grid_line_color":null,"ticker":{"id":"47476","type":"BasicTicker"}},"id":"47479","type":"Grid"},{"attributes":{},"id":"47486","type":"PanTool"},{"attributes":{"data_source":{"id":"47497","type":"ColumnDataSource"},"glyph":{"id":"47500","type":"Scatter"},"hover_glyph":null,"muted_glyph":{"id":"47502","type":"Scatter"},"nonselection_glyph":{"id":"47501","type":"Scatter"},"selection_glyph":null,"view":{"id":"47504","type":"CDSView"}},"id":"47503","type":"GlyphRenderer"},{"attributes":{"bottom_units":"screen","fill_alpha":{"value":0.5},"fill_color":{"value":"lightgrey"},"left_units":"screen","level":"overlay","line_alpha":{"value":1.0},"line_color":{"value":"black"},"line_dash":[4,4],"line_width":{"value":2},"render_mode":"css","right_units":"screen","top_units":"screen"},"id":"47516","type":"BoxAnnotation"},{"attributes":{},"id":"47473","type":"LinearScale"},{"attributes":{"callback":null,"end":755000.0,"reset_end":755000.0,"reset_start":34900.0,"start":34900.0,"tags":[[["SalePrice","SalePrice",null]]]},"id":"47464","type":"Range1d"},{"attributes":{},"id":"47505","type":"BasicTickFormatter"},{"attributes":{},"id":"47498","type":"Selection"},{"attributes":{"overlay":{"id":"47516","type":"BoxAnnotation"}},"id":"47488","type":"BoxZoomTool"},{"attributes":{},"id":"47481","type":"BasicTicker"},{"attributes":{"axis_label":"SalePrice","bounds":"auto","formatter":{"id":"47507","type":"BasicTickFormatter"},"major_label_orientation":"horizontal","ticker":{"id":"47481","type":"BasicTicker"}},"id":"47480","type":"LinearAxis"},{"attributes":{"fill_color":{"value":"#1f77b3"},"line_color":{"value":"#1f77b3"},"size":{"units":"screen","value":5.477225575051661},"x":{"field":"LotFrontage"},"y":{"field":"SalePrice"}},"id":"47500","type":"Scatter"},{"attributes":{"axis_label":"LotFrontage","bounds":"auto","formatter":{"id":"47505","type":"BasicTickFormatter"},"major_label_orientation":"horizontal","ticker":{"id":"47476","type":"BasicTicker"}},"id":"47475","type":"LinearAxis"},{"attributes":{"source":{"id":"47497","type":"ColumnDataSource"}},"id":"47504","type":"CDSView"},{"attributes":{},"id":"47476","type":"BasicTicker"},{"attributes":{"fill_alpha":{"value":0.1},"fill_color":{"value":"#1f77b3"},"line_alpha":{"value":0.1},"line_color":{"value":"#1f77b3"},"size":{"units":"screen","value":5.477225575051661},"x":{"field":"LotFrontage"},"y":{"field":"SalePrice"}},"id":"47501","type":"Scatter"},{"attributes":{"fill_alpha":{"value":0.2},"fill_color":{"value":"#1f77b3"},"line_alpha":{"value":0.2},"line_color":{"value":"#1f77b3"},"size":{"units":"screen","value":5.477225575051661},"x":{"field":"LotFrontage"},"y":{"field":"SalePrice"}},"id":"47502","type":"Scatter"},{"attributes":{},"id":"47471","type":"LinearScale"},{"attributes":{"callback":null,"data":{"LotFrontage":{"__ndarray__":"AAAAAABAUEAAAAAAAABUQAAAAAAAAFFAAAAAAAAATkAAAAAAAABVQAAAAAAAQFVAAAAAAADAUkAAAAAAAAD4fwAAAAAAgElAAAAAAAAASUAAAAAAAIBRQAAAAAAAQFVAAAAAAAAA+H8AAAAAAMBWQAAAAAAAAPh/AAAAAACASUAAAAAAAAD4fwAAAAAAAFJAAAAAAACAUEAAAAAAAIBRQAAAAAAAQFlAAAAAAACATEAAAAAAAMBSQAAAAAAAAEZAAAAAAAAA+H8AAAAAAIBbQAAAAAAAAE5AAAAAAACAWEAAAAAAAIBHQAAAAAAAAE5AAAAAAAAASUAAAAAAAAD4fwAAAAAAQFVAAAAAAACAUUAAAAAAAABOQAAAAAAAAFtAAAAAAAAAXEAAAAAAAIBSQAAAAAAAAFFAAAAAAABAUEAAAAAAAABVQAAAAAAAwFxAAAAAAAAA+H8AAAAAAAD4fwAAAAAAgFFAAAAAAACATkAAAAAAAABIQAAAAAAAAFVAAAAAAACAQEAAAAAAAIBQQAAAAAAAAPh/AAAAAAAASkAAAAAAAIBbQAAAAAAAAFFAAAAAAAAATkAAAAAAAABZQAAAAAAAADhAAAAAAABAVkAAAAAAAIBQQAAAAAAAAE5AAAAAAACAT0AAAAAAAABOQAAAAAAAAEZAAAAAAAAASUAAAAAAAAD4fwAAAAAAAFNAAAAAAAAA+H8AAAAAAABSQAAAAAAAgEdAAAAAAABAVEAAAAAAAMBXQAAAAAAAQFFAAAAAAACAUkAAAAAAAEBVQAAAAAAAAE5AAAAAAAAANUAAAAAAAAD4fwAAAAAAAElAAAAAAAAAUkAAAAAAAABOQAAAAAAAAFlAAAAAAAAAQEAAAAAAAIBTQAAAAAAAAFRAAAAAAAAA+H8AAAAAAEBeQAAAAAAAgF5AAAAAAAAAREAAAAAAAEBaQAAAAAAAAE5AAAAAAAAATkAAAAAAAEBVQAAAAAAAAFRAAAAAAAAATkAAAAAAAEBRQAAAAAAAAPh/AAAAAACAU0AAAAAAAEBSQAAAAAAAQFVAAAAAAABAU0AAAAAAAAD4fwAAAAAAQFNAAAAAAAAAUEAAAAAAAIBXQAAAAAAAAPh/AAAAAADAUkAAAAAAAABOQAAAAAAAAElAAAAAAABAVUAAAAAAAEBaQAAAAAAAwFJAAAAAAAAA+H8AAAAAAEBTQAAAAAAAAPh/AAAAAACATkAAAAAAAABBQAAAAAAAAPh/AAAAAACAUkAAAAAAAIBWQAAAAAAAQFBAAAAAAAAA+H8AAAAAAABJQAAAAAAAwFJAAAAAAACAS0AAAAAAAABIQAAAAAAAAE5AAAAAAAAA+H8AAAAAAIBLQAAAAAAAQFFAAAAAAABAUUAAAAAAAABWQAAAAAAAAPh/AAAAAADAUkAAAAAAAAD4fwAAAAAAgFNAAAAAAAAAVEAAAAAAAAD4fwAAAAAAgFRAAAAAAABAUkAAAAAAAEBQQAAAAAAAgFFAAAAAAACAU0AAAAAAAMBRQAAAAAAAgFNAAAAAAACAUUAAAAAAAAA4QAAAAAAAgElAAAAAAAAA+H8AAAAAAIBPQAAAAAAAAPh/AAAAAAAAXkAAAAAAAMBaQAAAAAAAAPh/AAAAAAAA+H8AAAAAAABVQAAAAAAAAE5AAAAAAAAATkAAAAAAAABXQAAAAAAAAFlAAAAAAADAYEAAAAAAAAD4fwAAAAAAgFtAAAAAAADAV0AAAAAAAIBLQAAAAAAAAERAAAAAAAAAT0AAAAAAAAD4fwAAAAAAgFVAAAAAAAAAT0AAAAAAAAD4fwAAAAAAAPh/AAAAAACgYUAAAAAAAABGQAAAAAAAAFRAAAAAAACAR0AAAAAAAABVQAAAAAAAQFhAAAAAAAAA+H8AAAAAAIBPQAAAAAAAAE5AAAAAAAAA+H8AAAAAAABLQAAAAAAAAE5AAAAAAACAT0AAAAAAAABXQAAAAAAAgFZAAAAAAAAA+H8AAAAAAABOQAAAAAAAAFBAAAAAAACAREAAAAAAAIBRQAAAAAAAAPh/AAAAAAAAUUAAAAAAAAA4QAAAAAAAAE5AAAAAAAAAOEAAAAAAAMBTQAAAAAAAwGVAAAAAAAAAV0AAAAAAAABTQAAAAAAAAFRAAAAAAADAUkAAAAAAAABJQAAAAAAAAPh/AAAAAAAASUAAAAAAAMBYQAAAAAAAAERAAAAAAAAA+H8AAAAAAAD4fwAAAAAAwFJAAAAAAADAUEAAAAAAAMBUQAAAAAAAAFJAAAAAAACARUAAAAAAAAD4fwAAAAAAAFJAAAAAAABAUEAAAAAAAIBMQAAAAAAAAPh/AAAAAACARUAAAAAAAEBSQAAAAAAAAPh/AAAAAABAVUAAAAAAAIBRQAAAAAAAwFlA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AAAAAACAUUAAAAAAAABPQAAAAAAAAPh/AAAAAADAUkAAAAAAAIBPQAAAAAAAAFRAAAAAAAAAQUAAAAAAAAD4fwAAAAAAAPh/AAAAAAAA+H8AAAAAAMBSQAAAAAAAAE5AAAAAAAAATkAAAAAAAIBSQAAAAAAAAE5AAAAAAAAA+H8AAAAAAEBVQAAAAAAAwFNAAAAAAACAWEAAAAAAAABTQAAAAAAAAPh/AAAAAAAAV0AAAAAAAIBBQAAAAAAAgFtAAAAAAACAREAAAAAAAABUQAAAAAAAwFJAAAAAAABAWkAAAAAAAMBTQAAAAAAAAElAAAAAAACAWEAAAAAAAABSQAAAAAAAAElAAAAAAAAAQEAAAAAAAAD4fwAAAAAAAFRAAAAAAADAU0AAAAAAAIBRQAAAAAAAAE5AAAAAAAAANUAAAAAAAAD4fwAAAAAAwFNAAAAAAABAWkAAAAAAAIBRQAAAAAAAAElAAAAAAAAATkAAAAAAAAD4fwAAAAAAAE5AAAAAAABAUEAAAAAAAIBRQAAAAAAAADVAAAAAAADAUkAAAAAAAIBRQAAAAAAAAFlAAAAAAAAAOEAAAAAAAABOQAAAAAAAAFRAAAAAAADAUkAAAAAAAABOQAAAAAAAAFRAAAAAAADAUkAAAAAAAABEQAAAAAAAgFFAAAAAAADAUUAAAAAAAIBLQAAAAAAAgFdAAAAAAAAA+H8AAAAAAMBTQAAAAAAAAPh/AAAAAACASkAAAAAAAABOQAAAAAAAgFZAAAAAAAAASUAAAAAAAEBgQAAAAAAAwFdAAAAAAAAAT0AAAAAAAIBRQAAAAAAAwFBAAAAAAAAATUAAAAAAAAD4fwAAAAAAQFVAAAAAAAAATkAAAAAAAABOQAAAAAAAAElAAAAAAACAUkAAAAAAAIBRQAAAAAAAgExAAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh/AAAAAABAVUAAAAAAAAD4fwAAAAAAgFNAAAAAAAAAQUAAAAAAAABNQAAAAAAAAPh/AAAAAACAUUAAAAAAAABLQAAAAAAAgEhAAAAAAADAUkAAAAAAAIBKQAAAAAAAAElAAAAAAADAVUAAAAAAAMBQQAAAAAAAQFVAAAAAAAAATUAAAAAAAEBRQAAAAAAAAE5AAAAAAACATEAAAAAAAAD4fwAAAAAAAPh/AAAAAABAU0AAAAAAAIBPQAAAAAAAgFBAAAAAAAAA+H8AAAAAAIBQQAAAAAAAQFNAAAAAAACAUUAAAAAAAMBTQAAAAAAAAPh/AAAAAACAUkAAAAAAAABOQAAAAAAAwFRAAAAAAAAAU0AAAAAAAIBRQAAAAAAAAFRAAAAAAAAASkAAAAAAAABYQAAAAAAAAEFAAAAAAABAVEAAAAAAAAD4fwAAAAAAgFhAAAAAAABAVEAAAAAAAMBSQAAAAAAAgElAAAAAAAAAVkAAAAAAAIBLQAAAAAAAgFJAAAAAAABAUEAAAAAAAABJQAAAAAAAAFBAAAAAAABAWEAAAAAAAABOQAAAAAAAAPh/AAAAAAAAVkAAAAAAAEBRQAAAAAAAAE5AAAAAAACASkAAAAAAAABUQAAAAAAAADhAAAAAAACAUkAAAAAAAABJQAAAAAAAAFRAAAAAAAAAPkAAAAAAAABWQAAAAAAAQFVAAAAAAACAVEAAAAAAAIBTQAAAAAAAgFNAAAAAAACATkAAAAAAAAD4fwAAAAAAAPh/AAAAAAAA+H8AAAAAAIBRQAAAAAAAADVAAAAAAAAAVEAAAAAAAAD4fwAAAAAAgE1AAAAAAACAVkAAAAAAAEBVQAAAAAAAgEZAAAAAAACAVkAAAAAAAMBRQAAAAAAAAPh/AAAAAAAAVEAAAAAAAMBVQAAAAAAAAPh/AAAAAAAAVEAAAAAAAIBRQAAAAAAAgFRAAAAAAAAASUAAAAAAAABBQAAAAAAAQFVAAAAAAAAAVEAAAAAAAABQQAAAAAAAAE5AAAAAAACASUAAAAAAAABJQAAAAAAAwFBAAAAAAACASkAAAAAAAABPQAAAAAAAAPh/AAAAAADAUkAAAAAAAABUQAAAAAAAQFVAAAAAAAAA+H8AAAAAAABOQAAAAAAAQFVAAAAAAACAUUAAAAAAAAA1QAAAAAAAQFBAAAAAAAAATkAAAAAAAIBRQAAAAAAAAE5AAAAAAADAVkAAAAAAAAA1QAAAAAAAAFJAAAAAAAAATkAAAAAAAIBTQAAAAAAAwFJAAAAAAAAA+H8AAAAAAABKQAAAAAAAAF5AAAAAAACAVkAAAAAAAIBIQAAAAAAAgFpAAAAAAAAA+H8AAAAAAEBQQAAAAAAAAPh/AAAAAAAAVEAAAAAAAABQQAAAAAAAAEtAAAAAAAAA+H8AAAAAAIBbQAAAAAAAAFRAAAAAAAAAOEAAAAAAAABOQAAAAAAAAEpAAAAAAAAAVEAAAAAAAAD4fwAAAAAAAElAAAAAAACAS0AAAAAAAAD4fwAAAAAAgFZAAAAAAAAATUAAAAAAAAD4fwAAAAAAAFVAAAAAAAAA+H8AAAAAAABOQAAAAAAAgE5AAAAAAAAA+H8AAAAAAABaQAAAAAAAAEVAAAAAAAAATkAAAAAAAIBJQAAAAAAAAEtAAAAAAAAASUAAAAAAAIBMQAAAAAAAQFBAAAAAAACATUAAAAAAAEBVQAAAAAAAAFRAAAAAAACAVEAAAAAAAABTQAAAAAAAgFFAAAAAAACAUUAAAAAAAAD4fwAAAAAAAEhAAAAAAABAUEAAAAAAAAD4fwAAAAAAAExAAAAAAACAUEAAAAAAAABEQAAAAAAAAE5AAAAAAAAA+H8AAAAAAIBTQAAAAAAAAE5AAAAAAAAAVEAAAAAAAABYQAAAAAAAQFFAAAAAAAAA+H8AAAAAAAD4fwAAAAAAgFFAAAAAAAAATkAAAAAAAIBVQAAAAAAAAE5AAAAAAAAA+H8AAAAAAABQQAAAAAAAQFVAAAAAAAAASkAAAAAAAIBDQAAAAAAAQFJAAAAAAADAUkAAAAAAAABUQAAAAAAAAPh/AAAAAAAATkAAAAAAAABOQAAAAAAAAFJAAAAAAAAATkAAAAAAAEBQQAAAAAAAAE5AAAAAAABAUEAAAAAAAEBQQAAAAAAAgFFAAAAAAACAREAAAAAAAAD4fwAAAAAAAPh/AAAAAABAUEAAAAAAAIBNQAAAAAAAAElAAAAAAACAS0AAAAAAAAD4fwAAAAAAwFNAAAAAAAAAVEAAAAAAAIBOQAAAAAAAAEFAAAAAAAAAUUAAAAAAAAD4fwAAAAAAADhAAAAAAABAUEAAAAAAAIBRQAAAAAAAAE5AAAAAAAAAUkAAAAAAAIBUQAAAAAAAAD5AAAAAAADAUkAAAAAAAABUQAAAAAAAwFJAAAAAAACAUUAAAAAAAIBHQAAAAAAAAPh/AAAAAADAUEAAAAAAAIBXQAAAAAAAgFFAAAAAAACAW0AAAAAAAABAQAAAAAAAgFVAAAAAAAAAWUAAAAAAAABOQAAAAAAAgFNAAAAAAACAT0AAAAAAAEBQQAAAAAAAwFBAAAAAAAAA+H8AAAAAAIBBQAAAAAAAAPh/AAAAAAAATkAAAAAAAABTQAAAAAAAAElAAAAAAAAA+H8AAAAAAIBFQAAAAAAAAPh/AAAAAAAAV0AAAAAAAABTQAAAAAAAAPh/AAAAAACAUUAAAAAAAMBRQAAAAAAAgExAAAAAAAAAWkAAAAAAAABOQAAAAAAAwFNAAAAAAAAAREAAAAAAAIBPQAAAAAAAwFpAAAAAAADAUkAAAAAAAMBWQAAAAAAAwFJAAAAAAAAAYkAAAAAAAEBVQAAAAAAAgFZAAAAAAACAU0AAAAAAAAD4fwAAAAAAgFBAAAAAAADAUkAAAAAAAIBGQAAAAAAAAEhAAAAAAAAA+H8AAAAAAAD4fwAAAAAAAFRAAAAAAAAARkAAAAAAAABSQAAAAAAAAE5AAAAAAAAA+H8AAAAAAABOQAAAAAAAQFRAAAAAAACAXEAAAAAAAABJQAAAAAAAQFBAAAAAAAAA+H8AAAAAAAA4QAAAAAAAAFRAAAAAAAAAPkAAAAAAAABGQAAAAAAAAFlAAAAAAADAUkAAAAAAAABOQAAAAAAAgFZAAAAAAAAANUAAAAAAAMBSQAAAAAAAgFFAAAAAAAAA+H8AAAAAAABOQAAAAAAAgFRAAAAAAAAAVEAAAAAAAABZQAAAAAAAAPh/AAAAAADAUkAAAAAAAABCQAAAAAAAwFJAAAAAAAAAVEAAAAAAAABCQAAAAAAAAPh/AAAAAACASkAAAAAAAAD4fwAAAAAAgFlAAAAAAAAA+H8AAAAAAAD4fwAAAAAAQFBAAAAAAAAAVEAAAAAAAAD4fwAAAAAAgEtAAAAAAADAUkAAAAAAAEBUQAAAAAAAgFFAAAAAAAAAUkAAAAAAAAD4fwAAAAAAwFBAAAAAAABAVUAAAAAAAAD4fwAAAAAAAFRAAAAAAAAATkAAAAAAAIBRQAAAAAAAgFJAAAAAAAAATkAAAAAAAABKQAAAAAAAwFJAAAAAAACAV0AAAAAAAIBSQAAAAAAAAFZAAAAAAAAA+H8AAAAAAABOQAAAAAAAAEZAAAAAAAAA+H8AAAAAAABOQAAAAAAAQFBAAAAAAAAASUAAAAAAAIBRQAAAAAAAgE1AAAAAAADAV0AAAAAAAABgQAAAAAAAAE5AAAAAAACAUUAAAAAAAIBRQAAAAAAAAPh/AAAAAAAAUEAAAAAAAMBRQAAAAAAAAElAAAAAAAAAUEAAAAAAAABZQAAAAAAAQFBAAAAAAAAA+H8AAAAAAABQQAAAAAAAgE9AAAAAAAAASUAAAAAAAAD4fwAAAAAAAFRAAAAAAAAAXUAAAAAAAIBVQAAAAAAAAPh/AAAAAACgYkAAAAAAAABUQAAAAAAAAPh/AAAAAACASUAAAAAAAIBUQAAAAAAAAD5AAAAAAAAANUAAAAAAAABJQAAAAAAAAPh/AAAAAADAWUAAAAAAAMBVQAAAAAAAgFFAAAAAAADAUEAAAAAAAEBQQAAAAAAAAElAAAAAAADAU0AAAAAAAAD4fwAAAAAAQFdAAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh/AAAAAABAUkAAAAAAAIBRQAAAAAAAAFVAAAAAAACAT0AAAAAAAJBzQAAAAAAAAEpAAAAAAADAUEAAAAAAAMBSQAAAAAAAQFJAAAAAAAAA+H8AAAAAAIBLQAAAAAAAAPh/AAAAAAAARUAAAAAAAABZQAAAAAAAAPh/AAAAAACAWEAAAAAAAIBRQAAAAAAAQFVAAAAAAABAUEAAAAAAAIBTQAAAAAAAAE5AAAAAAAAATkAAAAAAAABOQAAAAAAAAPh/AAAAAACAQUAAAAAAAIBUQAAAAAAAADhAAAAAAACAUUAAAAAAAEBQQAAAAAAAADhAAAAAAAAASUAAAAAAAAD4fwAAAAAAADhAAAAAAACAXkAAAAAAAABUQAAAAAAAQFBAAAAAAABAYEAAAAAAAAD4fwAAAAAAAElAAAAAAADAUkAAAAAAAABOQAAAAAAAAEJAAAAAAACAS0AAAAAAAMBXQAAAAAAAAE5AAAAAAAAA+H8AAAAAAIBJQAAAAAAAgEFAAAAAAAAAUUAAAAAAAABUQAAAAAAAAPh/AAAAAACAWEAAAAAAAIBFQAAAAAAAAPh/AAAAAADAUkAAAAAAAABRQAAAAAAAgE1AAAAAAADAVEAAAAAAAAD4fwAAAAAAQFBAAAAAAACAVEAAAAAAAEBeQAAAAAAAAFRAAAAAAAAAUUAAAAAAAABYQAAAAAAAgElAAAAAAAAA+H8AAAAAAAD4fwAAAAAAAE5AAAAAAAAAUEAAAAAAAIBSQAAAAAAAAE5AAAAAAADAUkAAAAAAAAD4fwAAAAAAgEVAAAAAAABAUEAAAAAAAAD4fwAAAAAAADVAAAAAAACARUAAAAAAAABOQAAAAAAAwFxAAAAAAADAUkAAAAAAAIBLQAAAAAAAAE5AAAAAAAAATkAAAAAAAIBRQAAAAAAAQFJAAAAAAAAA+H8AAAAAAAD4fwAAAAAAgEVAAAAAAAAATkAAAAAAAABQQAAAAAAAAEpAAAAAAACARUAAAAAAAAD4fwAAAAAAgFFAAAAAAABAUkAAAAAAAMBRQAAAAAAAwFNAAAAAAAAANUAAAAAAAAD4fwAAAAAAgFlAAAAAAAAA+H8AAAAAAAD4fwAAAAAAAElAAAAAAAAA+H8AAAAAAEBWQAAAAAAAAPh/AAAAAAAANUAAAAAAAAA1QAAAAAAAAFZAAAAAAAAA+H8AAAAAAABBQAAAAAAAgFVAAAAAAAAAVEAAAAAAAAD4fwAAAAAAQFVAAAAAAACATEAAAAAAAABZQAAAAAAAAE5AAAAAAABAUkAAAAAAAMBZQAAAAAAAAFlAAAAAAAAAUUAAAAAAAIBWQAAAAAAAAFpAAAAAAACARUAAAAAAAAD4fwAAAAAAAFhAAAAAAAAA+H8AAAAAAIBEQAAAAAAAAF5AAAAAAABAVUAAAAAAAABJQAAAAAAAAPh/AAAAAAAAVEAAAAAAAIBNQAAAAAAAAFRAAAAAAAAARUAAAAAAAABOQAAAAAAAAFJAAAAAAACAU0AAAAAAAABJQAAAAAAAwFJAAAAAAACAUkAAAAAAAMBSQAAAAAAAAE5AAAAAAAAA+H8AAAAAAIBCQAAAAAAAQFBAAAAAAAAAVEAAAAAAAMBSQAAAAAAAgFFAAAAAAAAAVEAAAAAAAAD4fwAAAAAAQFJAAAAAAAAA+H8AAAAAAEBVQAAAAAAAADhAAAAAAACAQkAAAAAAAABOQAAAAAAAADhAAAAAAAAATkAAAAAAAMBRQAAAAAAAgFJAAAAAAACAU0AAAAAAAABOQAAAAAAAAPh/AAAAAAAASUAAAAAAAIBUQAAAAAAAAE5AAAAAAACATkAAAAAAAIBRQAAAAAAAwFNAAAAAAAAAOEAAAAAAAIBYQAAAAAAAgFxAAAAAAAAAZUAAAAAAAAD4fwAAAAAAwFpAAAAAAAAA+H8AAAAAAABUQAAAAAAAQFJAAAAAAACAUEAAAAAAAIBWQAAAAAAAQFdAAAAAAAAA+H8AAAAAAIBMQAAAAAAAQFVAAAAAAACAUUAAAAAAAIBNQAAAAAAAAFVAAAAAAAAA+H8AAAAAAABJQAAAAAAAAPh/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","dtype":"float64","shape":[1460]},"SalePrice":[208500,181500,223500,140000,250000,143000,307000,200000,129900,118000,129500,345000,144000,279500,157000,132000,149000,90000,159000,139000,325300,139400,230000,129900,154000,256300,134800,306000,207500,68500,40000,149350,179900,165500,277500,309000,145000,153000,109000,82000,160000,170000,144000,130250,141000,319900,239686,249700,113000,127000,177000,114500,110000,385000,130000,180500,172500,196500,438780,124900,158000,101000,202500,140000,219500,317000,180000,226000,80000,225000,244000,129500,185000,144900,107400,91000,135750,127000,136500,110000,193500,153500,245000,126500,168500,260000,174000,164500,85000,123600,109900,98600,163500,133900,204750,185000,214000,94750,83000,128950,205000,178000,118964,198900,169500,250000,100000,115000,115000,190000,136900,180000,383970,217000,259500,176000,139000,155000,320000,163990,180000,100000,136000,153900,181000,84500,128000,87000,155000,150000,226000,244000,150750,220000,180000,174000,143000,171000,230000,231500,115000,260000,166000,204000,125000,130000,105000,222500,141000,115000,122000,372402,190000,235000,125000,79000,109500,269500,254900,320000,162500,412500,220000,103200,152000,127500,190000,325624,183500,228000,128500,215000,239000,163000,184000,243000,211000,172500,501837,100000,177000,200100,120000,200000,127000,475000,173000,135000,153337,286000,315000,184000,192000,130000,127000,148500,311872,235000,104000,274900,140000,171500,112000,149000,110000,180500,143900,141000,277000,145000,98000,186000,252678,156000,161750,134450,210000,107000,311500,167240,204900,200000,179900,97000,386250,112000,290000,106000,125000,192500,148000,403000,94500,128200,216500,89500,185500,194500,318000,113000,262500,110500,79000,120000,205000,241500,137000,140000,180000,277000,76500,235000,173000,158000,145000,230000,207500,220000,231500,97000,176000,276000,151000,130000,73000,175500,185000,179500,120500,148000,266000,241500,290000,139000,124500,205000,201000,141000,415298,192000,228500,185000,207500,244600,179200,164700,159000,88000,122000,153575,233230,135900,131000,235000,167000,142500,152000,239000,175000,158500,157000,267000,205000,149900,295000,305900,225000,89500,82500,360000,165600,132000,119900,375000,178000,188500,260000,270000,260000,187500,342643,354000,301000,126175,242000,87000,324000,145250,214500,78000,119000,139000,284000,207000,192000,228950,377426,214000,202500,155000,202900,82000,87500,266000,85000,140200,151500,157500,154000,437154,318061,190000,95000,105900,140000,177500,173000,134000,130000,280000,156000,145000,198500,118000,190000,147000,159000,165000,132000,162000,172400,134432,125000,123000,219500,61000,148000,340000,394432,179000,127000,187750,213500,76000,240000,192000,81000,125000,191000,426000,119000,215000,106500,100000,109000,129000,123000,169500,67000,241000,245500,164990,108000,258000,168000,150000,115000,177000,280000,339750,60000,145000,222000,115000,228000,181134,149500,239000,126000,142000,206300,215000,113000,315000,139000,135000,275000,109008,195400,175000,85400,79900,122500,181000,81000,212000,116000,119000,90350,110000,555000,118000,162900,172500,210000,127500,190000,199900,119500,120000,110000,280000,204000,210000,188000,175500,98000,256000,161000,110000,263435,155000,62383,188700,124000,178740,167000,146500,250000,187000,212000,190000,148000,440000,251000,132500,208900,380000,297000,89471,326000,374000,155000,164000,132500,147000,156000,175000,160000,86000,115000,133000,172785,155000,91300,34900,430000,184000,130000,120000,113000,226700,140000,289000,147000,124500,215000,208300,161000,124500,164900,202665,129900,134000,96500,402861,158000,265000,211000,234000,106250,150000,159000,184750,315750,176000,132000,446261,86000,200624,175000,128000,107500,39300,178000,107500,188000,111250,158000,272000,315000,248000,213250,133000,179665,229000,210000,129500,125000,263000,140000,112500,255500,108000,284000,113000,141000,108000,175000,234000,121500,170000,108000,185000,268000,128000,325000,214000,316600,135960,142600,120000,224500,170000,139000,118500,145000,164500,146000,131500,181900,253293,118500,325000,133000,369900,130000,137000,143000,79500,185900,451950,138000,140000,110000,319000,114504,194201,217500,151000,275000,141000,220000,151000,221000,205000,152000,225000,359100,118500,313000,148000,261500,147000,75500,137500,183200,105500,314813,305000,67000,240000,135000,168500,165150,160000,139900,153000,135000,168500,124000,209500,82500,139400,144000,200000,60000,93000,85000,264561,274000,226000,345000,152000,370878,143250,98300,155000,155000,84500,205950,108000,191000,135000,350000,88000,145500,149000,97500,167000,197900,402000,110000,137500,423000,230500,129000,193500,168000,137500,173500,103600,165000,257500,140000,148500,87000,109500,372500,128500,143000,159434,173000,285000,221000,207500,227875,148800,392000,194700,141000,755000,335000,108480,141500,176000,89000,123500,138500,196000,312500,140000,361919,140000,213000,55000,302000,254000,179540,109900,52000,102776,189000,129000,130500,165000,159500,157000,341000,128500,275000,143000,124500,135000,320000,120500,222000,194500,110000,103000,236500,187500,222500,131400,108000,163000,93500,239900,179000,190000,132000,142000,179000,175000,180000,299800,236000,265979,260400,98000,96500,162000,217000,275500,156000,172500,212000,158900,179400,290000,127500,100000,215200,337000,270000,264132,196500,160000,216837,538000,134900,102000,107000,114500,395000,162000,221500,142500,144000,135000,176000,175900,187100,165500,128000,161500,139000,233000,107900,187500,160200,146800,269790,225000,194500,171000,143500,110000,485000,175000,200000,109900,189000,582933,118000,227680,135500,223500,159950,106000,181000,144500,55993,157900,116000,224900,137000,271000,155000,224000,183000,93000,225000,139500,232600,385000,109500,189000,185000,147400,166000,151000,237000,167000,139950,128000,153500,100000,144000,130500,140000,157500,174900,141000,153900,171000,213000,133500,240000,187000,131500,215000,164000,158000,170000,127000,147000,174000,152000,250000,189950,131500,152000,132500,250580,148500,248900,129000,169000,236000,109500,200500,116000,133000,66500,303477,132250,350000,148000,136500,157000,187500,178000,118500,100000,328900,145000,135500,268000,149500,122900,172500,154500,165000,118858,140000,106500,142953,611657,135000,110000,153000,180000,240000,125500,128000,255000,250000,131000,174000,154300,143500,88000,145000,173733,75000,35311,135000,238000,176500,201000,145900,169990,193000,207500,175000,285000,176000,236500,222000,201000,117500,320000,190000,242000,79900,184900,253000,239799,244400,150900,214000,150000,143000,137500,124900,143000,270000,192500,197500,129000,119900,133900,172000,127500,145000,124000,132000,185000,155000,116500,272000,155000,239000,214900,178900,160000,135000,37900,140000,135000,173000,99500,182000,167500,165000,85500,199900,110000,139000,178400,336000,159895,255900,126000,125000,117000,395192,195000,197000,348000,168000,187000,173900,337500,121600,136500,185000,91000,206000,82000,86000,232000,136905,181000,149900,163500,88000,240000,102000,135000,100000,165000,85000,119200,227000,203000,187500,160000,213490,176000,194000,87000,191000,287000,112500,167500,293077,105000,118000,160000,197000,310000,230000,119750,84000,315500,287000,97000,80000,155000,173000,196000,262280,278000,139600,556581,145000,115000,84900,176485,200141,165000,144500,255000,180000,185850,248000,335000,220000,213500,81000,90000,110500,154000,328000,178000,167900,151400,135000,135000,154000,91500,159500,194000,219500,170000,138800,155900,126000,145000,133000,192000,160000,187500,147000,83500,252000,137500,197000,92900,160000,136500,146000,129000,176432,127000,170000,128000,157000,60000,119500,135000,159500,106000,325000,179900,274725,181000,280000,188000,205000,129900,134500,117000,318000,184100,130000,140000,133700,118400,212900,112000,118000,163900,115000,174000,259000,215000,140000,135000,93500,117500,239500,169000,102000,119000,94000,196000,144000,139000,197500,424870,80000,80000,149000,180000,174500,116900,143000,124000,149900,230000,120500,201800,218000,179900,230000,235128,185000,146000,224000,129000,108959,194000,233170,245350,173000,235000,625000,171000,163000,171900,200500,239000,285000,119500,115000,154900,93000,250000,392500,745000,120000,186700,104900,95000,262000,195000,189000,168000,174000,125000,165000,158000,176000,219210,144000,178000,148000,116050,197900,117000,213000,153500,271900,107000,200000,140000,290000,189000,164000,113000,145000,134500,125000,112000,229456,80500,91500,115000,134000,143000,137900,184000,145000,214000,147000,367294,127000,190000,132500,101800,142000,130000,138887,175500,195000,142500,265900,224900,248328,170000,465000,230000,178000,186500,169900,129500,119000,244000,171750,130000,294000,165400,127500,301500,99900,190000,151000,181000,128900,161500,180500,181000,183900,122000,378500,381000,144000,260000,185750,137000,177000,139000,137000,162000,197900,237000,68400,227000,180000,150500,139000,169000,132500,143000,190000,278000,281000,180500,119500,107500,162900,115000,138500,155000,140000,160000,154000,225000,177500,290000,232000,130000,325000,202500,138000,147000,179200,335000,203000,302000,333168,119000,206900,295493,208900,275000,111000,156500,72500,190000,82500,147000,55000,79000,130500,256000,176500,227000,132500,100000,125500,125000,167900,135000,52500,200000,128500,123000,155000,228500,177000,155835,108500,262500,283463,215000,122000,200000,171000,134900,410000,235000,170000,110000,149900,177500,315000,189000,260000,104900,156932,144152,216000,193000,127000,144000,232000,105000,165500,274300,466500,250000,239000,91000,117000,83000,167500,58500,237500,157000,112000,105000,125500,250000,136000,377500,131000,235000,124000,123000,163000,246578,281213,160000,137500,138000,137450,120000,193000,193879,282922,105000,275000,133000,112000,125500,215000,230000,140000,90000,257000,207000,175900,122500,340000,124000,223000,179900,127500,136500,274970,144000,142000,271000,140000,119000,182900,192140,143750,64500,186500,160000,174000,120500,394617,149700,197000,191000,149300,310000,121000,179600,129000,157900,240000,112000,92000,136000,287090,145000,84500,185000,175000,210000,266500,142125,147500]},"selected":{"id":"47498","type":"Selection"},"selection_policy":{"id":"47514","type":"UnionRenderers"}},"id":"47497","type":"ColumnDataSource"},{"attributes":{"callback":null,"end":313.0,"reset_end":313.0,"reset_start":21.0,"start":21.0,"tags":[[["LotFrontage","LotFrontage",null]]]},"id":"47463","type":"Range1d"},{"attributes":{"dimension":1,"grid_line_color":null,"ticker":{"id":"47481","type":"BasicTicker"}},"id":"47484","type":"Grid"},{"attributes":{},"id":"47487","type":"WheelZoomTool"},{"attributes":{"text":"LotFrontage","text_color":{"value":"black"},"text_font_size":{"value":"12pt"}},"id":"47467","type":"Title"},{"attributes":{"callback":null,"renderers":[{"id":"47503","type":"GlyphRenderer"}],"tags":["hv_created"],"tooltips":[["LotFrontage","@{LotFrontage}"],["SalePrice","@{SalePrice}"]]},"id":"47465","type":"HoverTool"},{"attributes":{},"id":"47489","type":"ResetTool"},{"attributes":{},"id":"47514","type":"UnionRenderers"},{"attributes":{},"id":"47507","type":"BasicTickFormatter"},{"attributes":{},"id":"47485","type":"SaveTool"}],"root_ids":["47466"]},"title":"Bokeh Application","version":"1.4.0"}};
+  var render_items = [{"docid":"ef230365-87e9-4d2e-a179-f4756a73ae65","roots":{"47466":"68dc4251-125b-4db9-bc3e-231df27310db"}}];
+  root.Bokeh.embed.embed_items_notebook(docs_json, render_items);
+
+  }
+  if (root.Bokeh !== undefined) {
+    embed_document(root);
+  } else {
+    var attempts = 0;
+    var timer = setInterval(function(root) {
+      if (root.Bokeh !== undefined) {
+        clearInterval(timer);
+        embed_document(root);
+      } else {
+        attempts++;
+        if (attempts > 100) {
+          clearInterval(timer);
+          console.log("Bokeh: ERROR: Unable to run BokehJS code because BokehJS library is missing");
+        }
+      }
+    }, 10, root)
+  }
+})(window);
+</script>
+</div>

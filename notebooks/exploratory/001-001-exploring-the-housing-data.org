@@ -19,7 +19,7 @@
 %autoreload 2
 #+END_SRC
 * The Ordinary World
-  The full dataset is available from the [[http://jse.amstat.org/contents_2011.htm][Journal of Statistics Education]] ([[https://ww2.amstat.org/publications/jse/v19n3/decock/AmesHousing.txt][The data]], and the [[https://ww2.amstat.org/publications/jse/v19n3/decock/DataDocumentation.txt][Data Documentation]]).
+  This is a look at the Ames, Iowa housing sale-prices dataset put together by Dean DeCock in 2011 as a teaching aid.The full dataset is available from the [[http://jse.amstat.org/contents_2011.htm][Journal of Statistics Education]] ([[https://ww2.amstat.org/publications/jse/v19n3/decock/AmesHousing.txt][The data]], and the [[https://ww2.amstat.org/publications/jse/v19n3/decock/DataDocumentation.txt][Data Documentation]]), however this uses a subset of the dataset hosted by kaggle as part of their [[https://www.kaggle.com/c/house-prices-advanced-regression-techniques][House Prices: Advanced Regression Techniques]] practice competition.
 ** Imports
 *** Python
 #+begin_src python :results none
@@ -28,18 +28,22 @@ from functools import partial
 #+end_src
 *** PyPi
 #+begin_src python :results none
+from hvplot import scatter_matrix
 from sklearn.dummy import DummyRegressor
-from sklearn.metrics import mean_absolute_error
+from sklearn.metrics import mean_absolute_error, mean_squared_log_error
 import holoviews
 import hvplot.pandas
+import pandas
 #+end_src
 *** This Project
 #+begin_src python :results none
+from ames.data.constants import RawData
 from ames.data.loaders import RawLoader
+from ames.data.submission import Submission
 #+end_src
 *** Others
 #+begin_src python :results none
-from graeae import EmbedHoloviews
+from graeae import CountPercentage, EmbedHoloviews
 #+end_src
 ** Set Up
 *** The Data
@@ -56,6 +60,8 @@ Plot = Namespace(
 )
 #+end_src
 * The Call To Adventure
+  To start, let's look at some descriptions of the data itself.
+
 ** An Initial Look at the Data
 #+begin_src python :results output :exports both
 rows, columns = data.X.shape
@@ -64,6 +70,8 @@ print(f"Rows: {rows:,}, Columns: {columns}")
 
 #+RESULTS:
 : Rows: 1,460, Columns: 80
+
+Given the number of rows, it isn't a large dataset, but it does have quite a few columns. What kind of columns do we have?
 
 #+begin_src python :results output :exports both
 numeric = [column for column in data.X.columns
@@ -76,12 +84,15 @@ print(f"Categorical Columns: {len(categorical)}")
 #+RESULTS:
 : Numeric Columns: 37
 : Categorical Columns: 43
-*** BoxPlot of Sales
-    Here's a boxplot of the Sales Prices.
+
+Most of the columns listed as "Categorical" are also ordinal, which we'll look at in more detail later.
+*** Violin Plot of Sales
+    Here's a [[https://www.wikiwand.com/en/Violin_plot][Violin Plot]] of the Sales Prices.
 #+begin_src python :results none
-plot = data.y.hvplot.box().opts(title="Sales Price Distribution",
-                                width=Plot.width,
-                                height=Plot.height)
+box_colors = {"boxes": "CornflowerBlue", "whiskers": "DarkOrange", "medians": "Aquamarine", "caps": "Gray"}
+plot = data.y.hvplot.violin().opts(title="Sales Price Distribution",
+                                                width=Plot.width,
+                                                height=Plot.height)
 source = Embed(plot=plot, file_name="sales_price_distribution")()
 #+end_src
 
@@ -98,6 +109,7 @@ print(source)
 
 It appears that the data is right-skewed, with a fair amount of "outliers" on the high-end of the price-range.
 
+*** A KDE of the Sale Prices
 #+begin_src python :results none
 mean_line = holoviews.VLine(data.y.mean(), label="mean")
 median_line = holoviews.VLine(data.y.median(), label="median")
@@ -119,8 +131,43 @@ print(source)
 : </object>
 #+end_export
 
-I don't know why the labels don't show up, but the vertical lines are, in order, the Mode, Median, and Mean.
+I don't know why the labels don't show up, but the vertical lines are, in order, the Mode, Median, and Mean and we see once again that the data is right-skewed.
 
+*** Cumulative Distribution Function
+#+begin_src python :results none
+plot = data.y.hvplot.hist(orientation="horizontal",
+                          normed=True, cumulative=True, histtype="step", filled=False).opts(
+                              title="CDF of Sales Price",
+                              width=Plot.width,
+                              height=Plot.height,
+                              alpha=0.50,
+                          )
+source = Embed(plot=plot, file_name="sales_price_cdf")()
+#+end_src
+
+#+begin_src python :results output html :exports both
+print(source)
+#+end_src
+
+#+RESULTS:
+#+begin_export html
+: <object type="text/html" data="sales_price_cdf.html" style="width:100%" height=800>
+:   <p>Figure Missing</p>
+: </object>
+#+end_export
+
+The CDF shows even more how lopsided housing prices are. 90% of the houses are less than $300,000, while you have prices up to $700,000.
+
+#+begin_src python :results output :exports both
+print(f"{int(data.y.quantile(0.9)):,}")
+print(f"{data.y.max():,}")
+#+end_src
+
+#+RESULTS:
+: 278,000
+: 755,000
+
+*** Central Tendencies
 #+begin_src python :results output raw :exports both
 print("|Name | Value|")
 print("|-+-|")
@@ -130,23 +177,28 @@ print(f"|Mode|{data.y.mode().iloc[0]:,}|")
 #+end_src
 
 #+RESULTS:
-: |Name | Value|
-: |-+-|
-: |Mean|180,921.19589041095|
-: |Median|163,000.0|
-: |Mode|140,000|
+|Name | Value|
+|-+-|
+|Mean|180,921.19589041095|
+|Median|163,000.0|
+|Mode|140,000|
+
+As you might expect from the KDE and box-plot, the mean is higher than the median.
 ** Dummy Predictions
    As a baseline - what happens if you choose a measure of central tendency as your predictor?
 
 #+begin_src python :results none
-def dummy(strategy:str="mean", constant=None):
+def dummy(strategy:str="mean", constant: float=None):
     if constant is not None:
         regressor = DummyRegressor(strategy="constant", constant=constant)
     else:
         regressor = DummyRegressor(strategy=strategy)
     regressor.fit(data.x_train, data.y_train)
     predictions = regressor.predict(data.x_validate)
-    print(f"Mean Absolute Error for {strategy} predictions: {mean_absolute_error(data.y_validate, predictions):,}")
+    
+    print(f"Mean Absolute Error for {strategy} predictions: {mean_absolute_error(data.y_validate, predictions):,.2f}\n")
+    print(f"Bias: {(predictions - data.y_validate).mean():,.2f}")
+    return
 #+end_src
 *** Mean Regressor
 #+begin_src python :results output :exports both
@@ -154,9 +206,9 @@ dummy("mean")
 #+end_src
 
 #+RESULTS:
-: Mean Absolute Error for mean predictions: 57,046.67787108275
-Mean Absolute Error for mean predictions: 57,046.67787108275
+Mean Absolute Error for mean predictions: 57,046.68
 
+Bias: -561.48
 
 *** Median Regressor
 #+begin_src python :results output :exports both
@@ -164,8 +216,9 @@ dummy("median")
 #+end_src
 
 #+RESULTS:
-: Mean Absolute Error for median predictions: 55,555.739726027394
-Mean Absolute Error for median predictions: 55,555.739726027394
+Mean Absolute Error for median predictions: 55,555.74
+
+Bias: -18,370.38
 
 *** Mode Regressor
 
@@ -174,11 +227,514 @@ dummy("mode", constant=data.y.mode().iloc[0])
 #+end_src
 
 #+RESULTS:
-: Mean Absolute Error for mode predictions: 58,944.11643835616
-Mean Absolute Error for mode predictions: 58,944.11643835616
+Mean Absolute Error for mode predictions: 58,944.12
+ 
+Bias: -41,370.38
 
-It appears that the median had the lowest error.
-** Median Sales Price
+It appears that the median had the lowest absolute error. In all three cases the prices tend to be underestimated on average with the mean showing the least amount of bias. So, the lower median error with higher bias comes from the fact that it didn't overestimate as much as the mean did, but it was further from the higher outliers than the mean was.
+** Submitting the Median Model
+   Let's see what our score is if we just predict the median.
+
+#+begin_src python :results none
+model = DummyRegressor(strategy="median")
+submit = Submission(model, "median", fit=True, data=data)
+submit()
+#+end_src
+
+This gets a score of 0.41889. It looks like there's more than one board for this dataset. On the one for people that took the course the error is 50,402.90397.
+
+They both say that they are using the Root-Mean-Squared-Error using the logarithms of the values (they use logarithms so expensive and cheap houses affect the error equally), but I think the [[https://www.kaggle.com/c/home-data-for-ml-course/overview][class version]] is using the Mean Absolute Error instead (since that's what they used in the course).
+
+#+begin_src python :results output :exports both
+predictions = model.predict(data.x_validate)
+print(f"Root Mean-Squared-Log-Error: {mean_squared_log_error(data.y_validate, predictions)**0.5:0.2f}\n")
+print(f"Mean Absolute Error: {mean_absolute_error(data.y_validate, predictions):,.2f}")
+#+end_src
+
+#+RESULTS:
+Root Mean-Squared-Log-Error: 0.39
+
+Mean Absolute Error: 55,555.74
+
+It does look like the class scoring is using the mean absolute error and the regular practice board is using the logarithm RMSE, in either case the model does slightly better on the test set than the validation set.
+** Missing Data
+*** Numeric
+#+begin_src python :results output :exports both
+for column in numeric:
+    series = data.X[column]
+    if series.hasnans:
+        print(f"{column}: {len(series[series.isna()])}")
+#+end_src
+
+#+RESULTS:
+: LotFrontage: 259
+: MasVnrArea: 8
+: GarageYrBlt: 81
+
+#+begin_src python :results output :exports both
+for column in categorical:
+    series = data.X[column]
+    if series.hasnans:
+        print(f"{column}: {len(series[series.isna()])}")
+#+end_src
+
+#+RESULTS:
+#+begin_example
+Alley: 1369
+MasVnrType: 8
+BsmtQual: 37
+BsmtCond: 37
+BsmtExposure: 38
+BsmtFinType1: 37
+BsmtFinType2: 38
+Electrical: 1
+FireplaceQu: 690
+GarageType: 81
+GarageFinish: 81
+GarageQual: 81
+GarageCond: 81
+PoolQC: 1453
+Fence: 1179
+MiscFeature: 1406
+#+end_example
+
+Interesting that there's more missing categorical data.
+** Looking at Some Data
+   You're probably supposed to do this with the training set only, but to make it easier I'll look at the training and validation sets combined.
+*** Sales Per Year
+#+begin_src python :results none
+grouped = data.data.groupby(["YrSold"]).agg(
+    {RawData.primary_key: "count"}).reset_index().rename(columns={
+        "YrSold": "Year",
+        "Id": "Sales"
+    })
+
+plot = grouped.hvplot.bar(x="Year", y="Sales").opts(title="Sales Per Year",
+                                 width=Plot.width,
+                                 height=Plot.height)
+source = Embed(plot=plot, file_name="sales_per_year")()
+#+end_src
+
+#+begin_src python :results output html :exports output
+print(source)
+#+end_src
+
+#+RESULTS:
+#+begin_export html
+: <object type="text/html" data="sales_per_year.html" style="width:100%" height=800>
+:   <p>Figure Missing</p>
+: </object>
+#+end_export
+
+So it looks like 2010 might be a little under-represented.
+*** Median Per Year
+
+#+begin_src python :results none
+grouped = data.data.groupby(["YrSold"]).agg(
+    {RawData.target: "median"}
+).reset_index().rename(columns={"YrSold": "Year"})
+plot = grouped.hvplot.bar(x="Year", y=RawData.target).opts(
+    title="Median Sale Price", height=Plot.height, width=Plot.width
+)
+
+source = Embed(plot=plot, file_name="median_sale_price")()
+#+end_src
+
+#+begin_src python :results output html :exports both
+print(source)
+#+end_src
+
+#+RESULTS:
+#+begin_export html
+: <object type="text/html" data="median_sale_price.html" style="width:100%" height=800>
+:   <p>Figure Missing</p>
+: </object>
+#+end_export
+
+That's sort of interesting, the peak year was 2007 and then it began to decline in 2008.
+
+#+begin_src python :results none
+data_ = data.data.sort_values(by="YrSold")
+plot = data_.hvplot.violin(by="YrSold", y=RawData.target)
+plot = plot.opts(
+    title="Sale Price by Year", height=Plot.height, width=Plot.width
+)
+
+source = Embed(plot=plot, file_name="median_sale_price_boxplot")()
+#+end_src
+
+#+begin_src python :results output html :exports both
+print(source)
+#+end_src
+
+#+RESULTS:
+#+begin_export html
+: <object type="text/html" data="median_sale_price_boxplot.html" style="width:100%" height=800>
+:   <p>Figure Missing</p>
+: </object>
+#+end_export
+
+When looked at on the scale of all the prices, it looks like the median didn't actually change that much, despite what the previous median plot seemed to show. Also, although there were two unusually high sales in 2007 and then a drop in 2008 followed by a rise (it's not obvious that there were two high sales in the violin plot but it was when this was a box-plot).
+
+#+begin_src python :results output :exports both
+sales = data.y_train.sort_values()
+top = sales[-2:]
+for value in top:
+    print(f"{value:,}")
+#+end_src
+
+#+RESULTS:
+: 625,000
+: 755,000
+
+If it comes down to it, it mike make sense to investigating the effect of outliers (at least these two).
+
+*** Age of the Houses
+    I thought it'd be interesting to see the sales prices based on the year that a home was built, but it turns out there's too many different years to make a plot that's legible so I'm going to do it by decade.
+#+begin_src python :results none
+data.data["Decade Built"] = (data.data.YearBuilt/10).astype(int) * 10
+data_ = data.data.sort_values(by="Decade Built")
+plot = data_.hvplot.violin(by="Decade Built", y=RawData.target)
+plot = plot.opts(
+    title="Decade House Built vs Sales Price",
+    height=Plot.height,
+    width=Plot.width,
+    xrotation=90
+)
+source = Embed(plot=plot, file_name="sales_by_decade_built")()
+#+end_src
+
+#+begin_src python :results output html :exports both
+print(source)
+#+end_src
+
+#+RESULTS:
+#+begin_export html
+: <object type="text/html" data="sales_by_decade_built.html" style="width:100%" height=800>
+:   <p>Figure Missing</p>
+: </object>
+#+end_export
+
+Interestingly the most extreme home prices came about in the 1990s, so it was within the Dot-Com bubble but outside of the [[https://www.wikiwand.com/en/Timeline_of_the_United_States_housing_bubble][Housing Bubble]], but the decades of 1882 and 1890 had surprisingly high Q3 values. Perhaps there's something special about this vintage.
+*** Year Remod Added
+    According to the data dictionary this is the year a building was remodeled (unless it was never remodeled then it was the construction date).
+
+#+begin_src python :results none
+data.data["Decade Remodeled"] = (data.data.YearRemodAdd/10).astype(int) * 10
+data_ = data.data.sort_values(by="Decade Remodeled")
+plot = data_.hvplot.violin(by="Decade Remodeled", y=RawData.target)
+plot = plot.opts(
+    title="Decade House Remodeled vs Sales Price",
+    height=Plot.height,
+    width=Plot.width,
+    xrotation=90
+)
+source = Embed(plot=plot, file_name="sales_by_decade_remodeled")()
+#+end_src
+
+#+begin_src python :results output html :exports both
+print(source)
+#+end_src
+
+#+RESULTS:
+#+begin_export html
+: <object type="text/html" data="sales_by_decade_remodeled.html" style="width:100%" height=800>
+:   <p>Figure Missing</p>
+: </object>
+#+end_export
+
+Now there's notably no decades prior to 1950, so all the old houses were remodeled and the median sales price more predictably inclines upward.
+
+*** Vintage Houses
+
+#+begin_src python :results none
+data.data["Remodel Gap"] = (data.data["Decade Remodeled"]
+                            - data.data["Decade Built"])
+data_ = data.data.sort_values(by="Remodel Gap")
+plot = data_.hvplot.violin(by="Remodel Gap", y=RawData.target)
+plot = plot.opts(
+    title="Years Until Remodel",
+    height=Plot.height,
+    width=Plot.width,
+    xrotation=90
+)
+source = Embed(plot=plot, file_name="sales_by_decade_years_to_remodel")()
+#+end_src
+
+#+begin_src python :results output html :exports output
+print(source)
+#+end_src
+
+#+RESULTS:
+#+begin_export html
+: <object type="text/html" data="sales_by_decade_years_to_remodel.html" style="width:100%" height=800>
+:   <p>Figure Missing</p>
+: </object>
+#+end_export
+
+So that's sort of interesting, if inexplicable. The highest median sales price comes from remodeling a really old home, but not a sort of old home, followed by having a new home.
+
+#+begin_src python :results none
+def scatter(x: str, title, file_name):
+    plot = data.data.hvplot.scatter(x=x, y=RawData.target).opts(
+        title=title,
+        width=Plot.width,
+        height=Plot.height
+    )
+    return Embed(plot=plot, file_name=file_name)()
+#+end_src
+
+#+begin_src python :results output html :exports output
+source = scatter("1stFlrSF", "First Floor Square Footage", "first_floor_sf")
+#+end_src
+
+#+begin_src python :results output html :exports output
+print(source)
+#+end_src
+
+#+RESULTS:
+#+begin_export html
+: <object type="text/html" data="first_floor_sf.html" style="width:100%" height=800>
+:   <p>Figure Missing</p>
+: </object>
+#+end_export
+
+#+begin_src python :results output html :exports output
+source = scatter("2ndFlrSF", "second Floor Square Footage", "second_floor_sf")
+#+end_src
+
+#+begin_src python :results output html :exports output
+print(source)
+#+end_src
+
+#+RESULTS:
+#+begin_export html
+: <object type="text/html" data="second_floor_sf.html" style="width:100%" height=800>
+:   <p>Figure Missing</p>
+: </object>
+#+end_export
+
+#+begin_src python :results output html :exports output
+source = scatter("3SsnPorch", "Three Season Porch Area", "three_season_sf")
+#+end_src
+
+#+begin_src python :results output html :exports output
+print(source)
+#+end_src
+
+#+RESULTS:
+#+begin_export html
+: <object type="text/html" data="three_season_sf.html" style="width:100%" height=800>
+:   <p>Figure Missing</p>
+: </object>
+#+end_export
+
+#+begin_src python :results output html :exports output
+source = scatter("BedroomAbvGr", "Bedrooms Above Grade", "bedrooms_above_grade")
+#+end_src
+
+#+begin_src python :results output html :exports output
+print(source)
+#+end_src
+
+#+RESULTS:
+#+begin_export html
+: <object type="text/html" data="bedrooms_above_grade.html" style="width:100%" height=800>
+:   <p>Figure Missing</p>
+: </object>
+#+end_export
+
+So that looks like a discrete value, or maybe even almost an ordinal variable. Although I know the name of the variable I don't actually know what 'bedrooms above grade' actually means.
+
+#+begin_src python :results output html :exports output
+source = scatter("BsmtFinSF1", "Finished Basement Square Feet", "finished_basement_square_feet")
+#+end_src
+
+#+begin_src python :results output html :exports output
+print(source)
+#+end_src
+
+#+RESULTS:
+#+begin_export html
+: <object type="text/html" data="finished_basement_square_feet.html" style="width:100%" height=800>
+:   <p>Figure Missing</p>
+: </object>
+#+end_export
+
+Well, there's some value to seeing what inputs appear to be linear in relation to the Sale Price, but really, there's just too many of them, and we'll let the algorithms find out what they are.
+** Categorical
+   The way the kaggle course tells you to handle the categorical data is using one-hot-encoding, which is the typical way to do it, but it's also somewhat problematic in that it adds many columns, and is problematic for trees.
+
+#+begin_src python :results none
+plot = data.data.hvplot.violin(by="Street", y=RawData.target).opts(
+    title="Type of Road Access",
+    width=Plot.width,
+    height=Plot.height
+)
+
+source = Embed(plot=plot, file_name="road_access")()
+#+end_src
+
+#+begin_src python :results output html :exports output
+print(source)
+#+end_src
+
+#+RESULTS:
+#+begin_export html
+: <object type="text/html" data="road_access.html" style="width:100%" height=800>
+:   <p>Figure Missing</p>
+: </object>
+#+end_export
+
+This seems to me to be ordinal - although the distributions don't really seem to indicate that it is... but I'll say that it is.
+
+#+begin_src python :results none
+ordinal = {"Street": {"Grvl": 0, "Pave": 1}}
+#+end_src
+
+#+begin_src python :results none
+plot = data.data.hvplot.violin(by="LotShape", y=RawData.target).opts(
+    title="General Shape of Property",
+    width=Plot.width,
+    height=Plot.height
+)
+
+source = Embed(plot=plot, file_name="lot_shape")()
+#+end_src
+
+#+begin_src python :results output html :exports output
+print(source)
+#+end_src
+
+#+RESULTS:
+#+begin_export html
+: <object type="text/html" data="lot_shape.html" style="width:100%" height=800>
+:   <p>Figure Missing</p>
+: </object>
+#+end_export
+
+#+begin_src python :results none
+plot = data.data.hvplot.violin(by="Utilities", y=RawData.target).opts(
+    title="Available Utilities",
+    width=Plot.width,
+    height=Plot.height
+)
+
+source = Embed(plot=plot, file_name="utilities")()
+#+end_src
+
+#+begin_src python :results output html :exports output
+print(source)
+#+end_src
+
+#+RESULTS:
+#+begin_export html
+: <object type="text/html" data="utilities.html" style="width:100%" height=800>
+:   <p>Figure Missing</p>
+: </object>
+#+end_export
+
+That seems meaningless.
+
+#+begin_src python :results none
+ignore = ["Utilities"]
+#+end_src
+
+#+begin_src python :results none
+plot = data.data.hvplot.violin(by="LandSlope", y=RawData.target).opts(
+    title="Property Slope",
+    width=Plot.width,
+    height=Plot.height
+)
+
+source = Embed(plot=plot, file_name="property_slope")()
+#+end_src
+
+#+begin_src python :results output html :exports output
+print(source)
+#+end_src
+
+#+RESULTS:
+#+begin_export html
+: <object type="text/html" data="property_slope.html" style="width:100%" height=800>
+:   <p>Figure Missing</p>
+: </object>
+#+end_export
+
+#+begin_src python :results none
+ordinal["LandSlope"] = {"Gtl": 0, "Mod": 1, "Sev": 2}
+#+end_src
+
+** Neighborhoods
+#+begin_src python :results none
+data_ = data.data.sort_values(by=RawData.target)
+plot = data_.hvplot.violin(by="Neighborhood", y=RawData.target).opts(
+    title="Neighborhoods",
+    width=Plot.width,
+    height=Plot.height,
+    xrotation=45
+)
+
+source = Embed(plot=plot, file_name="neighborhoods")()
+#+end_src
+
+#+begin_src python :results output html :exports output
+print(source)
+#+end_src
+
+#+RESULTS:
+#+begin_export html
+: <object type="text/html" data="neighborhoods.html" style="width:100%" height=800>
+:   <p>Figure Missing</p>
+: </object>
+#+end_export
+
+It appears that there is a price difference by neighborhood.
+
+#+begin_src python :results output raw :exports both
+CountPercentage(data.data.ExterQual)()
+#+end_src
+
+#+RESULTS:
+| Value   |   Count |   Percent (%) |
+|---------+---------+---------------|
+| TA      |     906 |         62.05 |
+| Gd      |     488 |         33.42 |
+| Ex      |      52 |          3.56 |
+| Fa      |      14 |          0.96 |
+
+ExterQual: Evaluates the quality of the material on the exterior 
+		
+       Ex	Excellent
+       Gd	Good
+       TA	Average/Typical
+       Fa	Fair
+       Po	Poor
+
+#+begin_src python :results none
+QUALITY = "Po Fa TA Gd Ex".split()
+OPTIONAL_QUALITY = ["NA"] + QUALITY
+NO_POOR = "NA Fa TA Gd Ex".split()
+
+QUALITY_RANK = dict(zip(QUALITY, range(len(QUALITY))))
+OPTIONAL_RANK = dict(zip(OPTIONAL_QUALITY, range(len(OPTIONAL_QUALITY))))
+ordinal["ExterQual"] = QUALITY_RANK
+ordinal["ExterCond"] = QUALITY_RANK
+ordinal["BsmtQual"] = OPTIONAL_RANK
+ordinal["BsmtCond"] = OPTIONAL_RANK
+ordinal["BsmtExposure"] = dict(zip("NA No Mn Av Gd".split(), range(5)))
+ordinal["BsmtFinType1"] = dict(zip("NA Unf LwQ Rec BLQ ALQ GLQ".split(), range(7)))
+ordinal["BsmtFinType2"] = dict(zip("NA Unf LwQ Rec BLQ ALQ GLQ".split(), range(7)))
+ordinal["HeatingQC"] = QUALITY_RANK
+ordinal["KitchenQual"] = QUALITY
+ordinal["Functional"] = dict(zip("Sal Sev Maj2 Maj1 Mod Min2 Min1 Typ".split(), range(8)))
+ordinal["FireplaceQu"] = dict(zip("TA Gd Ex".split(), range(3)))
+ordinal["GarageFinish"] = dict(zip("NA Unf RFn Fin".split(), range(4)))
+ordinal["GarageQual"] = OPTIONAL_QUALITY
+ordinal["GarageCond"] = OPTIONAL_QUALITY
+ordinal["PavedDrive"] = dict(zip("N P Y".split(), range(3)))
+ordinal["PoolQC"] = dict(zip(NO_POOR, range(len(NO_POOR))))
+#+end_src
 
 * The Return
 ** Sources

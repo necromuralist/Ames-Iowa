@@ -1,0 +1,833 @@
+
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-1.4.0.min.js" type="text/javascript"></script>
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-widgets-1.4.0.min.js" type="text/javascript"></script>
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-tables-1.4.0.min.js" type="text/javascript"></script>
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-gl-1.4.0.min.js" type="text/javascript"></script>
+<script src="https://code.jquery.com/jquery-2.1.4.min.js" type="text/javascript"></script>
+<script src="https://code.jquery.com/ui/1.10.4/jquery-ui.min.js" type="text/javascript"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.1.20/require.min.js" type="text/javascript"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/underscore.js/1.8.3/underscore-min.js" type="text/javascript"></script>
+<script type="text/javascript">function HoloViewsWidget() {
+}
+
+HoloViewsWidget.prototype.init_slider = function(init_val){
+  if(this.load_json) {
+    this.from_json()
+  } else {
+    this.update_cache();
+  }
+}
+
+HoloViewsWidget.prototype.populate_cache = function(idx){
+  this.cache[idx].innerHTML = this.frames[idx];
+  if (this.embed) {
+    delete this.frames[idx];
+  }
+}
+
+HoloViewsWidget.prototype.process_error = function(msg){
+}
+
+HoloViewsWidget.prototype.from_json = function() {
+  var data_url = this.json_path + this.id + '.json';
+  $.getJSON(data_url, $.proxy(function(json_data) {
+    this.frames = json_data;
+    this.update_cache();
+    this.update(0);
+  }, this));
+}
+
+HoloViewsWidget.prototype.dynamic_update = function(current){
+  if (current === undefined) {
+    return
+  }
+  this.current = current;
+  if (this.comm) {
+    var msg = {comm_id: this.id+'_client', content: current}
+    this.comm.send(msg);
+  }
+}
+
+HoloViewsWidget.prototype.update_cache = function(force){
+  var frame_len = Object.keys(this.frames).length;
+  for (var i=0; i<frame_len; i++) {
+    if(!this.load_json || this.dynamic)  {
+      var frame = Object.keys(this.frames)[i];
+    } else {
+      var frame = i;
+    }
+    if(!(frame in this.cache) || force) {
+      if ((frame in this.cache) && force) { this.cache[frame].remove() }
+      var div = document.createElement("div");
+      var parent = document.getElementById("_anim_img"+this.id);
+      div.style.display = "none";
+      parent.appendChild(div)
+      this.cache[frame] = div;
+      var cache_id = "_anim_img"+this.id+"_"+frame;
+      this.populate_cache(frame);
+    }
+  }
+}
+
+HoloViewsWidget.prototype.update = function(current){
+  if(current in this.cache) {
+    for (var index in this.cache) {
+      this.cache[index].style.display = "none";
+    }
+    this.cache[current].style.display = "";
+    this.wait = false;
+  }
+}
+
+HoloViewsWidget.prototype.init_comms = function() {
+  var that = this
+  HoloViews.comm_manager.register_target(this.plot_id, this.id, function (msg) { that.msg_handler(msg) })
+  if (!this.cached || this.dynamic) {
+    function ack_callback(msg) {
+      var msg = msg.metadata;
+      var comm_id = msg.comm_id;
+      var comm_status = HoloViews.comm_status[comm_id];
+      if (that.queue.length > 0) {
+        that.time = Date.now();
+        that.dynamic_update(that.queue[that.queue.length-1]);
+        that.queue = [];
+      } else {
+        that.wait = false;
+      }
+      if ((msg.msg_type == "Ready") && msg.content) {
+        console.log("Python callback returned following output:", msg.content);
+      } else if (msg.msg_type == "Error") {
+        console.log("Python failed with the following traceback:", msg.traceback)
+      }
+    }
+    var comm = HoloViews.comm_manager.get_client_comm(this.plot_id, this.id+'_client', ack_callback);
+    return comm
+  }
+}
+
+HoloViewsWidget.prototype.msg_handler = function(msg) {
+  var metadata = msg.metadata;
+  if ((metadata.msg_type == "Ready")) {
+    if (metadata.content) {
+      console.log("Python callback returned following output:", metadata.content);
+    }
+	return;
+  } else if (metadata.msg_type == "Error") {
+    console.log("Python failed with the following traceback:", metadata.traceback)
+    return
+  }
+  this.process_msg(msg)
+}
+
+HoloViewsWidget.prototype.process_msg = function(msg) {
+}
+
+function SelectionWidget(frames, id, slider_ids, keyMap, dim_vals, notFound, load_json, mode, cached, json_path, dynamic, plot_id){
+  this.frames = frames;
+  this.id = id;
+  this.plot_id = plot_id;
+  this.slider_ids = slider_ids;
+  this.keyMap = keyMap
+  this.current_frame = 0;
+  this.current_vals = dim_vals;
+  this.load_json = load_json;
+  this.mode = mode;
+  this.notFound = notFound;
+  this.cached = cached;
+  this.dynamic = dynamic;
+  this.cache = {};
+  this.json_path = json_path;
+  this.init_slider(this.current_vals[0]);
+  this.queue = [];
+  this.wait = false;
+  if (!this.cached || this.dynamic) {
+    this.comm = this.init_comms();
+  }
+}
+
+SelectionWidget.prototype = new HoloViewsWidget;
+
+
+SelectionWidget.prototype.get_key = function(current_vals) {
+  var key = "(";
+  for (var i=0; i<this.slider_ids.length; i++)
+  {
+    var val = this.current_vals[i];
+    if (!(typeof val === 'string')) {
+      if (val % 1 === 0) { val = val.toFixed(1); }
+      else { val = val.toFixed(10); val = val.slice(0, val.length-1);}
+    }
+    key += "'" + val + "'";
+    if(i != this.slider_ids.length-1) { key += ', ';}
+    else if(this.slider_ids.length == 1) { key += ',';}
+  }
+  key += ")";
+  return this.keyMap[key];
+}
+
+SelectionWidget.prototype.set_frame = function(dim_val, dim_idx){
+  this.current_vals[dim_idx] = dim_val;
+  var key = this.current_vals;
+  if (!this.dynamic) {
+    key = this.get_key(key)
+  }
+  if (this.dynamic || !this.cached) {
+    if ((this.time !== undefined) && ((this.wait) && ((this.time + 10000) > Date.now()))) {
+      this.queue.push(key);
+      return
+    }
+    this.queue = [];
+    this.time = Date.now();
+    this.current_frame = key;
+    this.wait = true;
+    this.dynamic_update(key)
+  } else if (key !== undefined) {
+    this.update(key)
+  }
+}
+
+
+/* Define the ScrubberWidget class */
+function ScrubberWidget(frames, num_frames, id, interval, load_json, mode, cached, json_path, dynamic, plot_id){
+  this.slider_id = "_anim_slider" + id;
+  this.loop_select_id = "_anim_loop_select" + id;
+  this.id = id;
+  this.plot_id = plot_id;
+  this.interval = interval;
+  this.current_frame = 0;
+  this.direction = 0;
+  this.dynamic = dynamic;
+  this.timer = null;
+  this.load_json = load_json;
+  this.mode = mode;
+  this.cached = cached;
+  this.frames = frames;
+  this.cache = {};
+  this.length = num_frames;
+  this.json_path = json_path;
+  document.getElementById(this.slider_id).max = this.length - 1;
+  this.init_slider(0);
+  this.wait = false;
+  this.queue = [];
+  if (!this.cached || this.dynamic) {
+    this.comm = this.init_comms()
+  }
+}
+
+ScrubberWidget.prototype = new HoloViewsWidget;
+
+ScrubberWidget.prototype.set_frame = function(frame){
+  this.current_frame = frame;
+  var widget = document.getElementById(this.slider_id);
+  if (widget === null) {
+    this.pause_animation();
+    return
+  }
+  widget.value = this.current_frame;
+  if (this.dynamic || !this.cached) {
+    if ((this.time !== undefined) && ((this.wait) && ((this.time + 10000) > Date.now()))) {
+      this.queue.push(frame);
+      return
+    }
+    this.queue = [];
+    this.time = Date.now();
+    this.wait = true;
+    this.dynamic_update(frame)
+  } else {
+    this.update(frame)
+  }
+}
+
+ScrubberWidget.prototype.get_loop_state = function(){
+  var button_group = document[this.loop_select_id].state;
+  for (var i = 0; i < button_group.length; i++) {
+    var button = button_group[i];
+    if (button.checked) {
+      return button.value;
+    }
+  }
+  return undefined;
+}
+
+
+ScrubberWidget.prototype.next_frame = function() {
+  this.set_frame(Math.min(this.length - 1, this.current_frame + 1));
+}
+
+ScrubberWidget.prototype.previous_frame = function() {
+  this.set_frame(Math.max(0, this.current_frame - 1));
+}
+
+ScrubberWidget.prototype.first_frame = function() {
+  this.set_frame(0);
+}
+
+ScrubberWidget.prototype.last_frame = function() {
+  this.set_frame(this.length - 1);
+}
+
+ScrubberWidget.prototype.slower = function() {
+  this.interval /= 0.7;
+  if(this.direction > 0){this.play_animation();}
+  else if(this.direction < 0){this.reverse_animation();}
+}
+
+ScrubberWidget.prototype.faster = function() {
+  this.interval *= 0.7;
+  if(this.direction > 0){this.play_animation();}
+  else if(this.direction < 0){this.reverse_animation();}
+}
+
+ScrubberWidget.prototype.anim_step_forward = function() {
+  if(this.current_frame < this.length - 1){
+    this.next_frame();
+  }else{
+    var loop_state = this.get_loop_state();
+    if(loop_state == "loop"){
+      this.first_frame();
+    }else if(loop_state == "reflect"){
+      this.last_frame();
+      this.reverse_animation();
+    }else{
+      this.pause_animation();
+      this.last_frame();
+    }
+  }
+}
+
+ScrubberWidget.prototype.anim_step_reverse = function() {
+  if(this.current_frame > 0){
+    this.previous_frame();
+  } else {
+    var loop_state = this.get_loop_state();
+    if(loop_state == "loop"){
+      this.last_frame();
+    }else if(loop_state == "reflect"){
+      this.first_frame();
+      this.play_animation();
+    }else{
+      this.pause_animation();
+      this.first_frame();
+    }
+  }
+}
+
+ScrubberWidget.prototype.pause_animation = function() {
+  this.direction = 0;
+  if (this.timer){
+    clearInterval(this.timer);
+    this.timer = null;
+  }
+}
+
+ScrubberWidget.prototype.play_animation = function() {
+  this.pause_animation();
+  this.direction = 1;
+  var t = this;
+  if (!this.timer) this.timer = setInterval(function(){t.anim_step_forward();}, this.interval);
+}
+
+ScrubberWidget.prototype.reverse_animation = function() {
+  this.pause_animation();
+  this.direction = -1;
+  var t = this;
+  if (!this.timer) this.timer = setInterval(function(){t.anim_step_reverse();}, this.interval);
+}
+
+function extend(destination, source) {
+  for (var k in source) {
+    if (source.hasOwnProperty(k)) {
+      destination[k] = source[k];
+    }
+  }
+  return destination;
+}
+
+function update_widget(widget, values) {
+  if (widget.hasClass("ui-slider")) {
+    widget.slider('option', {
+      min: 0,
+      max: values.length-1,
+      dim_vals: values,
+      value: 0,
+      dim_labels: values
+    })
+    widget.slider('option', 'slide').call(widget, event, {value: 0})
+  } else {
+    widget.empty();
+    for (var i=0; i<values.length; i++){
+      widget.append($("<option>", {
+        value: i,
+        text: values[i]
+      }))
+    };
+    widget.data('values', values);
+    widget.data('value', 0);
+    widget.trigger("change");
+  };
+}
+
+function init_slider(id, plot_id, dim, values, next_vals, labels, dynamic, step, value, next_dim,
+                     dim_idx, delay, jQueryUI_CDN, UNDERSCORE_CDN) {
+  // Slider JS Block START
+  function loadcssfile(filename){
+    var fileref=document.createElement("link")
+    fileref.setAttribute("rel", "stylesheet")
+    fileref.setAttribute("type", "text/css")
+    fileref.setAttribute("href", filename)
+    document.getElementsByTagName("head")[0].appendChild(fileref)
+  }
+  loadcssfile("https://code.jquery.com/ui/1.10.4/themes/smoothness/jquery-ui.css");
+  /* Check if jQuery and jQueryUI have been loaded
+     otherwise load with require.js */
+  var jQuery = window.jQuery,
+    // check for old versions of jQuery
+    oldjQuery = jQuery && !!jQuery.fn.jquery.match(/^1\.[0-4](\.|$)/),
+    jquery_path = '',
+    paths = {},
+    noConflict;
+  var jQueryUI = jQuery.ui;
+  // check for jQuery
+  if (!jQuery || oldjQuery) {
+    // load if it's not available or doesn't meet min standards
+    paths.jQuery = jQuery;
+    noConflict = !!oldjQuery;
+  } else {
+    // register the current jQuery
+    define('jquery', [], function() { return jQuery; });
+  }
+  if (!jQueryUI) {
+    paths.jQueryUI = jQueryUI_CDN.slice(null, -3);
+  } else {
+    define('jQueryUI', [], function() { return jQuery.ui; });
+  }
+  paths.underscore = UNDERSCORE_CDN.slice(null, -3);
+  var jquery_require = {
+    paths: paths,
+    shim: {
+      "jQueryUI": {
+        exports:"$",
+        deps: ['jquery']
+      },
+      "underscore": {
+        exports: '_'
+      }
+    }
+  }
+  require.config(jquery_require);
+  require(["jQueryUI", "underscore"], function(jUI, _){
+    if (noConflict) $.noConflict(true);
+    var vals = values;
+    if (dynamic && vals.constructor === Array) {
+      var default_value = parseFloat(value);
+      var min = parseFloat(vals[0]);
+      var max = parseFloat(vals[vals.length-1]);
+      var wstep = step;
+      var wlabels = [default_value];
+      var init_label = default_value;
+    } else {
+      var min = 0;
+      if (dynamic) {
+        var max = Object.keys(vals).length - 1;
+        var init_label = labels[value];
+        var default_value = values[value];
+      } else {
+        var max = vals.length - 1;
+        var init_label = labels[value];
+        var default_value = value;
+      }
+      var wstep = 1;
+      var wlabels = labels;
+    }
+    function adjustFontSize(text) {
+      var width_ratio = (text.parent().width()/8)/text.val().length;
+      var size = Math.min(0.9, Math.max(0.6, width_ratio))+'em';
+      text.css('font-size', size);
+    }
+    var slider = $('#_anim_widget'+id+'_'+dim);
+    slider.slider({
+      animate: "fast",
+      min: min,
+      max: max,
+      step: wstep,
+      value: default_value,
+      dim_vals: vals,
+      dim_labels: wlabels,
+      next_vals: next_vals,
+      slide: function(event, ui) {
+        var vals = slider.slider("option", "dim_vals");
+        var next_vals = slider.slider("option", "next_vals");
+        var dlabels = slider.slider("option", "dim_labels");
+        if (dynamic) {
+          var dim_val = ui.value;
+          if (vals.constructor === Array) {
+            var label = ui.value;
+          } else {
+            var label = dlabels[ui.value];
+          }
+        } else {
+          var dim_val = vals[ui.value];
+          var label = dlabels[ui.value];
+        }
+        var text = $('#textInput'+id+'_'+dim);
+        text.val(label);
+        adjustFontSize(text);
+        HoloViews.index[plot_id].set_frame(dim_val, dim_idx);
+        if (Object.keys(next_vals).length > 0) {
+          var new_vals = next_vals[dim_val];
+          var next_widget = $('#_anim_widget'+id+'_'+next_dim);
+          update_widget(next_widget, new_vals);
+        }
+      }
+    });
+    slider.keypress(function(event) {
+      if (event.which == 80 || event.which == 112) {
+        var start = slider.slider("option", "value");
+        var stop =  slider.slider("option", "max");
+        for (var i=start; i<=stop; i++) {
+          var delay = i*delay;
+          $.proxy(function doSetTimeout(i) { setTimeout($.proxy(function() {
+            var val = {value:i};
+            slider.slider('value',i);
+            slider.slider("option", "slide")(null, val);
+          }, slider), delay);}, slider)(i);
+        }
+      }
+      if (event.which == 82 || event.which == 114) {
+        var start = slider.slider("option", "value");
+        var stop =  slider.slider("option", "min");
+        var count = 0;
+        for (var i=start; i>=stop; i--) {
+          var delay = count*delay;
+          count = count + 1;
+          $.proxy(function doSetTimeout(i) { setTimeout($.proxy(function() {
+            var val = {value:i};
+            slider.slider('value',i);
+            slider.slider("option", "slide")(null, val);
+          }, slider), delay);}, slider)(i);
+        }
+      }
+    });
+    var textInput = $('#textInput'+id+'_'+dim)
+    textInput.val(init_label);
+    adjustFontSize(textInput);
+  });
+}
+
+function init_dropdown(id, plot_id, dim, vals, value, next_vals, labels, next_dim, dim_idx, dynamic) {
+  var widget = $("#_anim_widget"+id+'_'+dim);
+  widget.data('values', vals)
+  for (var i=0; i<vals.length; i++){
+    if (dynamic) {
+      var val = vals[i];
+    } else {
+      var val = i;
+    }
+    widget.append($("<option>", {
+      value: val,
+      text: labels[i]
+    }));
+  };
+  widget.data("next_vals", next_vals);
+  widget.val(value);
+  widget.on('change', function(event, ui) {
+    if (dynamic) {
+      var dim_val = parseInt(this.value);
+    } else {
+      var dim_val = $.data(this, 'values')[this.value];
+    }
+    var next_vals = $.data(this, "next_vals");
+    if (Object.keys(next_vals).length > 0) {
+      var new_vals = next_vals[dim_val];
+      var next_widget = $('#_anim_widget'+id+'_'+next_dim);
+      update_widget(next_widget, new_vals);
+    }
+    var widgets = HoloViews.index[plot_id]
+    if (widgets) {
+      widgets.set_frame(dim_val, dim_idx);
+    }
+  });
+}
+
+
+if (window.HoloViews === undefined) {
+  window.HoloViews = {}
+  window.PyViz = window.HoloViews
+} else if (window.PyViz === undefined) {
+  window.PyViz = window.HoloViews
+}
+
+
+var _namespace = {
+  init_slider: init_slider,
+  init_dropdown: init_dropdown,
+  comms: {},
+  comm_status: {},
+  index: {},
+  plot_index: {},
+  kernels: {},
+  receivers: {}
+}
+
+for (var k in _namespace) {
+  if (!(k in window.HoloViews)) {
+    window.HoloViews[k] = _namespace[k];
+  }
+}
+
+// Define Bokeh specific subclasses
+function BokehSelectionWidget() {
+  SelectionWidget.apply(this, arguments);
+}
+
+function BokehScrubberWidget() {
+  ScrubberWidget.apply(this, arguments);
+}
+
+// Let them inherit from the baseclasses
+BokehSelectionWidget.prototype = Object.create(SelectionWidget.prototype);
+BokehScrubberWidget.prototype = Object.create(ScrubberWidget.prototype);
+
+// Define methods to override on widgets
+var BokehMethods = {
+  update_cache : function(){
+    for (var index in this.frames) {
+      this.frames[index] = JSON.parse(this.frames[index]);
+    }
+  },
+  update : function(current){
+    if (current === undefined) {
+      return;
+    }
+    var data = this.frames[current];
+    if (data !== undefined) {
+      if (data.root in HoloViews.plot_index) {
+        var doc = HoloViews.plot_index[data.root].model.document;
+      } else {
+        var doc = Bokeh.index[data.root].model.document;
+      }
+      doc.apply_json_patch(data.content);
+    }
+  },
+  init_comms: function() {
+    if (Bokeh.protocol !== undefined) {
+      this.receiver = new Bokeh.protocol.Receiver()
+    } else {
+      this.receiver = null;
+    }
+    return HoloViewsWidget.prototype.init_comms.call(this);
+  },
+  process_msg : function(msg) {
+    if (this.plot_id in HoloViews.plot_index) {
+      var doc = HoloViews.plot_index[this.plot_id].model.document;
+    } else {
+      var doc = Bokeh.index[this.plot_id].model.document;
+    }
+    if (this.receiver === null) { return }
+    var receiver = this.receiver;
+    if (msg.buffers.length > 0) {
+      receiver.consume(msg.buffers[0].buffer)
+    } else {
+      receiver.consume(msg.content.data)
+    }
+    const comm_msg = receiver.message;
+    if ((comm_msg != null) && (doc != null)) {
+      doc.apply_json_patch(comm_msg.content, comm_msg.buffers)
+    }
+  }
+}
+
+// Extend Bokeh widgets with backend specific methods
+extend(BokehSelectionWidget.prototype, BokehMethods);
+extend(BokehScrubberWidget.prototype, BokehMethods);
+
+window.HoloViews.BokehSelectionWidget = BokehSelectionWidget
+window.HoloViews.BokehScrubberWidget = BokehScrubberWidget
+</script>
+<script type="text/javascript">
+    function JupyterCommManager() {
+    }
+
+    JupyterCommManager.prototype.register_target = function(plot_id, comm_id, msg_handler) {
+      if (window.comm_manager || ((window.Jupyter !== undefined) && (Jupyter.notebook.kernel != null))) {
+        var comm_manager = window.comm_manager || Jupyter.notebook.kernel.comm_manager;
+        comm_manager.register_target(comm_id, function(comm) {
+          comm.on_msg(msg_handler);
+        });
+      } else if ((plot_id in window.PyViz.kernels) && (window.PyViz.kernels[plot_id])) {
+        window.PyViz.kernels[plot_id].registerCommTarget(comm_id, function(comm) {
+          comm.onMsg = msg_handler;
+        });
+      }
+    }
+
+    JupyterCommManager.prototype.get_client_comm = function(plot_id, comm_id, msg_handler) {
+      if (comm_id in window.PyViz.comms) {
+        return window.PyViz.comms[comm_id];
+      } else if (window.comm_manager || ((window.Jupyter !== undefined) && (Jupyter.notebook.kernel != null))) {
+        var comm_manager = window.comm_manager || Jupyter.notebook.kernel.comm_manager;
+        var comm = comm_manager.new_comm(comm_id, {}, {}, {}, comm_id);
+        if (msg_handler) {
+          comm.on_msg(msg_handler);
+        }
+      } else if ((plot_id in window.PyViz.kernels) && (window.PyViz.kernels[plot_id])) {
+        var comm = window.PyViz.kernels[plot_id].connectToComm(comm_id);
+        comm.open();
+        if (msg_handler) {
+          comm.onMsg = msg_handler;
+        }
+      }
+
+      window.PyViz.comms[comm_id] = comm;
+      return comm;
+    }
+
+    window.PyViz.comm_manager = new JupyterCommManager();
+    </script>
+
+<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/css/bootstrap.min.css">
+<link rel="stylesheet" href="https://code.jquery.com/ui/1.10.4/themes/smoothness/jquery-ui.css">
+<style>div.bk-hbox {
+    display: flex;
+    justify-content: center;
+}
+
+div.bk-hbox div.bk-plot {
+    padding: 8px;
+}
+
+div.bk-hbox div.bk-data-table {
+    padding: 20px;
+}
+
+div.hololayout {
+  display: flex;
+  align-items: center;
+  margin: 0;
+}
+
+div.holoframe {
+  width: 75%;
+}
+
+div.holowell {
+  display: flex;
+  align-items: center;
+}
+
+form.holoform {
+  background-color: #fafafa;
+  border-radius: 5px;
+  overflow: hidden;
+  padding-left: 0.8em;
+  padding-right: 0.8em;
+  padding-top: 0.4em;
+  padding-bottom: 0.4em;
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.05);
+  margin-bottom: 20px;
+  border: 1px solid #e3e3e3;
+}
+
+div.holowidgets {
+  padding-right: 0;
+  width: 25%;
+}
+
+div.holoslider {
+  min-height: 0 !important;
+  height: 0.8em;
+  width: 100%;
+}
+
+div.holoformgroup {
+  padding-top: 0.5em;
+  margin-bottom: 0.5em;
+}
+
+div.hologroup {
+  padding-left: 0;
+  padding-right: 0.8em;
+  width: 100%;
+}
+
+.holoselect {
+  width: 92%;
+  margin-left: 0;
+  margin-right: 0;
+}
+
+.holotext {
+  padding-left:  0.5em;
+  padding-right: 0;
+  width: 100%;
+}
+
+.holowidgets .ui-resizable-se {
+  visibility: hidden
+}
+
+.holoframe > .ui-resizable-se {
+  visibility: hidden
+}
+
+.holowidgets .ui-resizable-s {
+  visibility: hidden
+}
+
+
+/* CSS rules for noUISlider based slider used by JupyterLab extension  */
+
+.noUi-handle {
+  width: 20px !important;
+  height: 20px !important;
+  left: -5px !important;
+  top: -5px !important;
+}
+
+.noUi-handle:before, .noUi-handle:after {
+  visibility: hidden;
+  height: 0px;
+}
+
+.noUi-target {
+  margin-left: 0.5em;
+  margin-right: 0.5em;
+}
+</style><div style='display: table; margin: 0 auto;'>
+
+
+
+
+
+
+  <div class="bk-root" id="2c2522f1-bc79-4bcf-993c-3e5c90e063b6" data-root-id="42894"></div>
+
+<script type="text/javascript">
+  (function(root) {
+  function embed_document(root) {
+    
+  var docs_json = {"bd6f0fb4-fc9d-4146-b6ac-42fdce079c2e":{"roots":{"references":[{"attributes":{"align":null,"below":[{"id":"42903","type":"CategoricalAxis"}],"center":[{"id":"42906","type":"Grid"},{"id":"42911","type":"Grid"}],"left":[{"id":"42907","type":"LinearAxis"}],"margin":null,"min_border_bottom":10,"min_border_left":10,"min_border_right":10,"min_border_top":10,"plot_height":800,"plot_width":1000,"renderers":[{"id":"42927","type":"GlyphRenderer"},{"id":"42933","type":"GlyphRenderer"},{"id":"42939","type":"GlyphRenderer"},{"id":"42945","type":"GlyphRenderer"}],"sizing_mode":"fixed","title":{"id":"42895","type":"Title"},"toolbar":{"id":"42917","type":"Toolbar"},"x_range":{"id":"42892","type":"FactorRange"},"x_scale":{"id":"42899","type":"CategoricalScale"},"y_range":{"id":"42893","type":"Range1d"},"y_scale":{"id":"42901","type":"LinearScale"}},"id":"42894","subtype":"Figure","type":"Plot"},{"attributes":{"x0":{"field":"x"},"x1":{"field":"x"},"y0":{"field":"y0"},"y1":{"field":"y1"}},"id":"42931","type":"Segment"},{"attributes":{"overlay":{"id":"42964","type":"BoxAnnotation"}},"id":"42915","type":"BoxZoomTool"},{"attributes":{},"id":"42949","type":"BasicTickFormatter"},{"attributes":{"fill_color":{"value":"white"},"line_color":{"value":"white"},"x":{"field":"x"},"y":{"field":"y"}},"id":"42943","type":"Scatter"},{"attributes":{"callback":null,"data":{"bottom":{"__ndarray__":"AAAAAIBVAUEAAAAAYMv6QAAAAABAcfxAAAAAAHBo+EAAAAAAoFX+QAAAAACADf1AAAAAAEAB/kAAAAAA4A/6QAAAAAAAwvpAAAAAAMC1+0AAAAAAUCsBQQAAAABAcfxAAAAAAKz4BUE=","dtype":"float64","shape":[13]},"top":{"__ndarray__":"AAAAAIATDEEAAAAAaL4FQQAAAABAGAZBAAAAAAj5AkEAAAAA+LIDQQAAAACAwARBAAAAAGDpBUEAAAAACDEDQQAAAACIlQRBAAAAAFDHAEEAAAAA0AwEQQAAAABQRQVBAAAAAKYeEUE=","dtype":"float64","shape":[13]},"x":[[0,0],[10,0],[20,0],[30,0],[40,0],[50,0],[60,0],[70,0],[80,0],[90,0],[100,0],[110,0],[120,0]]},"selected":{"id":"42961","type":"Selection"},"selection_policy":{"id":"42960","type":"UnionRenderers"}},"id":"42935","type":"ColumnDataSource"},{"attributes":{},"id":"42947","type":"CategoricalTickFormatter"},{"attributes":{"axis_label":"Remodel Gap","bounds":"auto","formatter":{"id":"42947","type":"CategoricalTickFormatter"},"major_label_orientation":1.5707963267948966,"ticker":{"id":"42904","type":"CategoricalTicker"}},"id":"42903","type":"CategoricalAxis"},{"attributes":{},"id":"42956","type":"UnionRenderers"},{"attributes":{},"id":"42958","type":"UnionRenderers"},{"attributes":{"data_source":{"id":"42941","type":"ColumnDataSource"},"glyph":{"id":"42943","type":"Scatter"},"hover_glyph":null,"muted_glyph":null,"nonselection_glyph":{"id":"42944","type":"Scatter"},"selection_glyph":null,"view":{"id":"42946","type":"CDSView"}},"id":"42945","type":"GlyphRenderer"},{"attributes":{},"id":"42904","type":"CategoricalTicker"},{"attributes":{"callback":null,"data":{"x":[[0,0],[10,0],[20,0],[30,0],[40,0],[50,0],[60,0],[70,0],[80,0],[90,0],[100,0],[110,0],[120,0]],"y0":[55993,35311,55000,34900,85000,79000,84900,52000,64500,85000,106250,100000,94000],"y1":[361919,269500,272000,230000,207500,243000,259500,191000,235000,155000,168000,124000,295000]},"selected":{"id":"42959","type":"Selection"},"selection_policy":{"id":"42958","type":"UnionRenderers"}},"id":"42929","type":"ColumnDataSource"},{"attributes":{},"id":"42957","type":"Selection"},{"attributes":{"callback":null,"end":755000.0,"reset_end":755000.0,"reset_start":34900.0,"start":34900.0,"tags":[[["SalePrice","SalePrice",null]]]},"id":"42893","type":"Range1d"},{"attributes":{},"id":"42899","type":"CategoricalScale"},{"attributes":{"source":{"id":"42935","type":"ColumnDataSource"}},"id":"42940","type":"CDSView"},{"attributes":{},"id":"42959","type":"Selection"},{"attributes":{},"id":"42901","type":"LinearScale"},{"attributes":{},"id":"42914","type":"WheelZoomTool"},{"attributes":{"bottom":{"field":"bottom"},"fill_color":{"value":"black"},"top":{"field":"top"},"width":{"value":0.1},"x":{"field":"x"}},"id":"42937","type":"VBar"},{"attributes":{},"id":"42916","type":"ResetTool"},{"attributes":{"active_drag":"auto","active_inspect":"auto","active_multi":null,"active_scroll":"auto","active_tap":"auto","tools":[{"id":"42912","type":"SaveTool"},{"id":"42913","type":"PanTool"},{"id":"42914","type":"WheelZoomTool"},{"id":"42915","type":"BoxZoomTool"},{"id":"42916","type":"ResetTool"}]},"id":"42917","type":"Toolbar"},{"attributes":{"callback":null,"data":{"xs":[[[0,-7.265881056733842e-09],[0,-6.288174465341382e-08],[0,-4.5127517424463425e-07],[0,-2.69361168927749e-06],[0,-1.3433815920712038e-05],[0,-5.6369447422576014e-05],[0,-0.00020101361406262526],[0,-0.0006174707104095912],[0,-0.0016606378463220773],[0,-0.003975253169863142],[0,-0.008583272797577628],[0,-0.016855166577053018],[0,-0.030265373664368017],[0,-0.05005410360094882],[0,-0.07717970859780687],[0,-0.11261353186792651],[0,-0.1571533765174884],[0,-0.20994721220422063],[0,-0.26663002453041507],[0,-0.3194754846286129],[0,-0.3606863464884196],[0,-0.386548046784118],[0,-0.3985114465848189],[0,-0.4],[0,-0.39240570197142094],[0,-0.37473286738370926],[0,-0.346937506285109],[0,-0.31254074517360664],[0,-0.2772727183877543],[0,-0.24548839029652425],[0,-0.21831850819717633],[0,-0.19481457120722345],[0,-0.1739353105743935],[0,-0.1551599271327622],[0,-0.13793251006842844],[0,-0.12153546538441735],[0,-0.10588632797609975],[0,-0.09201351977588154],[0,-0.0811178036125724],[0,-0.07307097788294656],[0,-0.06621809250100112],[0,-0.058853797692252074],[0,-0.05073549224428517],[0,-0.04310235606051907],[0,-0.03740853841779057],[0,-0.0340745469106965],[0,-0.03223493715635585],[0,-0.03050465720690685],[0,-0.028010518274779374],[0,-0.024825928637744264],[0,-0.02158207202960018],[0,-0.01877847508959625],[0,-0.016441947953770006],[0,-0.014297327296937624],[0,-0.012126918970103342],[0,-0.009948114346563666],[0,-0.007931652279379309],[0,-0.0062314039687967615],[0,-0.004892999136823721],[0,-0.003875536877335318],[0,-0.003134995846911172],[0,-0.002691340235759061],[0,-0.0026071441920379607],[0,-0.0028791421766055764],[0,-0.0033489299091447274],[0,-0.003744195801735224],[0,-0.003834277474000981],[0,-0.0035618974007017795],[0,-0.0030412673492321153],[0,-0.002456403118929464],[0,-0.001967384054648132],[0,-0.001661757716336373],[0,-0.0015243441387096644],[0,-0.0014422901395123016],[0,-0.0012840364047528136],[0,-0.0010031850155818236],[0,-0.0006631327106620276],[0,-0.0003650271396271124],[0,-0.00016701980052077485],[0,-6.749580716560816e-05],[0,-4.0887661322256536e-05],[0,-7.887053033764695e-05],[0,-0.00021049105000845288],[0,-0.0004923538034272201],[0,-0.0009605849609411195],[0,-0.0015583276360433586],[0,-0.002102736479501366],[0,-0.002360902834695363],[0,-0.002206008298662893],[0,-0.001715264749789899],[0,-0.0011094381119538033],[0,-0.0005965983079219053],[0,-0.0002665340352852831],[0,-9.884355931283262e-05],[0,-3.0400066878785855e-05],[0,-7.74693530738247e-06],[0,-1.6342706515951454e-06],[0,-2.8516057727074076e-07],[0,-4.112356202547341e-08],[0,-4.89810058858995e-09],[0,4.89810058858995e-09],[0,4.112356202547341e-08],[0,2.8516057727074076e-07],[0,1.6342706515951454e-06],[0,7.74693530738247e-06],[0,3.0400066878785855e-05],[0,9.884355931283262e-05],[0,0.0002665340352852831],[0,0.0005965983079219053],[0,0.0011094381119538033],[0,0.001715264749789899],[0,0.002206008298662893],[0,0.002360902834695363],[0,0.002102736479501366],[0,0.0015583276360433586],[0,0.0009605849609411195],[0,0.0004923538034272201],[0,0.00021049105000845288],[0,7.887053033764695e-05],[0,4.0887661322256536e-05],[0,6.749580716560816e-05],[0,0.00016701980052077485],[0,0.0003650271396271124],[0,0.0006631327106620276],[0,0.0010031850155818236],[0,0.0012840364047528136],[0,0.0014422901395123016],[0,0.0015243441387096644],[0,0.001661757716336373],[0,0.001967384054648132],[0,0.002456403118929464],[0,0.0030412673492321153],[0,0.0035618974007017795],[0,0.003834277474000981],[0,0.003744195801735224],[0,0.0033489299091447274],[0,0.0028791421766055764],[0,0.0026071441920379607],[0,0.002691340235759061],[0,0.003134995846911172],[0,0.003875536877335318],[0,0.004892999136823721],[0,0.0062314039687967615],[0,0.007931652279379309],[0,0.009948114346563666],[0,0.012126918970103342],[0,0.014297327296937624],[0,0.016441947953770006],[0,0.01877847508959625],[0,0.02158207202960018],[0,0.024825928637744264],[0,0.028010518274779374],[0,0.03050465720690685],[0,0.03223493715635585],[0,0.0340745469106965],[0,0.03740853841779057],[0,0.04310235606051907],[0,0.05073549224428517],[0,0.058853797692252074],[0,0.06621809250100112],[0,0.07307097788294656],[0,0.0811178036125724],[0,0.09201351977588154],[0,0.10588632797609975],[0,0.12153546538441735],[0,0.13793251006842844],[0,0.1551599271327622],[0,0.1739353105743935],[0,0.19481457120722345],[0,0.21831850819717633],[0,0.24548839029652425],[0,0.2772727183877543],[0,0.31254074517360664],[0,0.346937506285109],[0,0.37473286738370926],[0,0.39240570197142094],[0,0.4],[0,0.3985114465848189],[0,0.386548046784118],[0,0.3606863464884196],[0,0.3194754846286129],[0,0.26663002453041507],[0,0.20994721220422063],[0,0.1571533765174884],[0,0.11261353186792651],[0,0.07717970859780687],[0,0.05005410360094882],[0,0.030265373664368017],[0,0.016855166577053018],[0,0.008583272797577628],[0,0.003975253169863142],[0,0.0016606378463220773],[0,0.0006174707104095912],[0,0.00020101361406262526],[0,5.6369447422576014e-05],[0,1.3433815920712038e-05],[0,2.69361168927749e-06],[0,4.5127517424463425e-07],[0,6.288174465341382e-08],[0,7.265881056733842e-09]],[[10,-5.4024060615414925e-08],[10,-1.9841391944865743e-07],[10,-6.811540644074729e-07],[10,-2.186540916185454e-06],[10,-6.565985535740435e-06],[10,-1.8455056084688714e-05],[10,-4.858632419543265e-05],[10,-0.00011992000567846169],[10,-0.00027781254188217433],[10,-0.0006049674823713445],[10,-0.0012405962092941585],[10,-0.0024012160338455282],[10,-0.004398661831449118],[10,-0.007650407699214027],[10,-0.012678785190653045],[10,-0.020097980590382765],[10,-0.030588027047333766],[10,-0.04485141552043135],[10,-0.063542618833029],[10,-0.0871606849501862],[10,-0.11590683476794941],[10,-0.14953127589875861],[10,-0.1872135634953545],[10,-0.22752266109915556],[10,-0.2684810141151663],[10,-0.3077241238281637],[10,-0.3427246805709958],[10,-0.3710491582415222],[10,-0.39062516029084443],[10,-0.4],[10,-0.39855669850260195],[10,-0.38663605563550874],[10,-0.3655154844646169],[10,-0.337227268609168],[10,-0.30424842478610004],[10,-0.2691358838634281],[10,-0.23419392098878533],[10,-0.20124184484269497],[10,-0.1715103766405901],[10,-0.14565350584823478],[10,-0.1238358206938066],[10,-0.10585151249008096],[10,-0.09124594709247863],[10,-0.07942950168425918],[10,-0.06978210423702555],[10,-0.06174256135747839],[10,-0.054869333635369215],[10,-0.048861778216910644],[10,-0.04354534677254304],[10,-0.03883929565720095],[10,-0.0347267868380136],[10,-0.03123265473490642],[10,-0.028397376711311473],[10,-0.026234422898376904],[10,-0.024676187915380423],[10,-0.023536123651100894],[10,-0.022519705351487555],[10,-0.021295254456820553],[10,-0.019599944523732992],[10,-0.01733162152605298],[10,-0.014581425397471554],[10,-0.011593041343124033],[10,-0.008671443022999737],[10,-0.006084847445281236],[10,-0.003999012166103375],[10,-0.0024604928798347228],[10,-0.0014211053717684368],[10,-0.0007823554509719512],[10,-0.00043893848325225965],[10,-0.0003091761715485091],[10,-0.0003497111475864575],[10,-0.000556987584131148],[10,-0.000958536800593946],[10,-0.00159551604037547],[10,-0.00249763211100619],[10,-0.0036542980579949685],[10,-0.004990617694941102],[10,-0.006360011466645348],[10,-0.007562911217330548],[10,-0.008391549400060865],[10,-0.008687927779371305],[10,-0.0083928777325958],[10,-0.007565300554174169],[10,-0.006363002018284207],[10,-0.0049936548077645455],[10,-0.0036567524134124493],[10,-0.0024985795272392764],[10,-0.0015929838735757645],[10,-0.0009476547921079406],[10,-0.0005260288075190368],[10,-0.00027245167091374106],[10,-0.0001316709607808377],[10,-5.937602434169617e-05],[10,-2.498347282064331e-05],[10,-9.80878196848905e-06],[10,-3.5933368947971844e-06],[10,-1.2282912943823296e-06],[10,-3.9176478240247654e-07],[10,-1.1659233315491152e-07],[10,-3.237689339928343e-08],[10,3.237689339928343e-08],[10,1.1659233315491152e-07],[10,3.9176478240247654e-07],[10,1.2282912943823296e-06],[10,3.5933368947971844e-06],[10,9.80878196848905e-06],[10,2.498347282064331e-05],[10,5.937602434169617e-05],[10,0.0001316709607808377],[10,0.00027245167091374106],[10,0.0005260288075190368],[10,0.0009476547921079406],[10,0.0015929838735757645],[10,0.0024985795272392764],[10,0.0036567524134124493],[10,0.0049936548077645455],[10,0.006363002018284207],[10,0.007565300554174169],[10,0.0083928777325958],[10,0.008687927779371305],[10,0.008391549400060865],[10,0.007562911217330548],[10,0.006360011466645348],[10,0.004990617694941102],[10,0.0036542980579949685],[10,0.00249763211100619],[10,0.00159551604037547],[10,0.000958536800593946],[10,0.000556987584131148],[10,0.0003497111475864575],[10,0.0003091761715485091],[10,0.00043893848325225965],[10,0.0007823554509719512],[10,0.0014211053717684368],[10,0.0024604928798347228],[10,0.003999012166103375],[10,0.006084847445281236],[10,0.008671443022999737],[10,0.011593041343124033],[10,0.014581425397471554],[10,0.01733162152605298],[10,0.019599944523732992],[10,0.021295254456820553],[10,0.022519705351487555],[10,0.023536123651100894],[10,0.024676187915380423],[10,0.026234422898376904],[10,0.028397376711311473],[10,0.03123265473490642],[10,0.0347267868380136],[10,0.03883929565720095],[10,0.04354534677254304],[10,0.048861778216910644],[10,0.054869333635369215],[10,0.06174256135747839],[10,0.06978210423702555],[10,0.07942950168425918],[10,0.09124594709247863],[10,0.10585151249008096],[10,0.1238358206938066],[10,0.14565350584823478],[10,0.1715103766405901],[10,0.20124184484269497],[10,0.23419392098878533],[10,0.2691358838634281],[10,0.30424842478610004],[10,0.337227268609168],[10,0.3655154844646169],[10,0.38663605563550874],[10,0.39855669850260195],[10,0.4],[10,0.39062516029084443],[10,0.3710491582415222],[10,0.3427246805709958],[10,0.3077241238281637],[10,0.2684810141151663],[10,0.22752266109915556],[10,0.1872135634953545],[10,0.14953127589875861],[10,0.11590683476794941],[10,0.0871606849501862],[10,0.063542618833029],[10,0.04485141552043135],[10,0.030588027047333766],[10,0.020097980590382765],[10,0.012678785190653045],[10,0.007650407699214027],[10,0.004398661831449118],[10,0.0024012160338455282],[10,0.0012405962092941585],[10,0.0006049674823713445],[10,0.00027781254188217433],[10,0.00011992000567846169],[10,4.858632419543265e-05],[10,1.8455056084688714e-05],[10,6.565985535740435e-06],[10,2.186540916185454e-06],[10,6.811540644074729e-07],[10,1.9841391944865743e-07],[10,5.4024060615414925e-08]],[[20,-6.765780333116022e-08],[20,-1.9181678079042258e-07],[20,-5.208298526498473e-07],[20,-1.354569712470919e-06],[20,-3.374970614946992e-06],[20,-8.057167711780515e-06],[20,-1.8434691759139832e-05],[20,-4.043411736009333e-05],[20,-8.504734447747484e-05],[20,-0.00017161136415207132],[20,-0.0003323620381463226],[20,-0.0006181692363255896],[20,-0.0011049321977234599],[20,-0.0018995825078190445],[20,-0.003144179965116029],[20,-0.005016449837991908],[20,-0.007725544841317958],[20,-0.01150290857206105],[20,-0.016589657496267653],[20,-0.023223344929883625],[20,-0.03162760350421097],[20,-0.04200739784826709],[20,-0.05455034725328145],[20,-0.06943134067049807],[20,-0.08681454138835148],[20,-0.1068451104592628],[20,-0.1296235408391538],[20,-0.15515879559783358],[20,-0.1833022355155654],[20,-0.21367172125506181],[20,-0.24558275964542348],[20,-0.2780089594092103],[20,-0.3095947759466727],[20,-0.338737285630717],[20,-0.36373982065156807],[20,-0.3830207768549066],[20,-0.3953409927560787],[20,-0.4],[20,-0.39695171660621525],[20,-0.3868064874285606],[20,-0.37071544329511674],[20,-0.35016589051215835],[20,-0.3267411722128292],[20,-0.3019056889983172],[20,-0.2768626157434899],[20,-0.25250358486556795],[20,-0.2294375936064315],[20,-0.20806312308666028],[20,-0.18864108980488187],[20,-0.17133733066780596],[20,-0.15622513415283973],[20,-0.14326046772614523],[20,-0.13225575311944224],[20,-0.1228779367157935],[20,-0.11468486680981434],[20,-0.10719680136792731],[20,-0.09998477654648186],[20,-0.09275031244138296],[20,-0.08537351221027874],[20,-0.07791707398053982],[20,-0.07058751820155006],[20,-0.06366695156494628],[20,-0.05743526833906674],[20,-0.05210262093706261],[20,-0.047766452224167096],[20,-0.044399002731739294],[20,-0.041862856032526284],[20,-0.03994594399090121],[20,-0.03840459598835789],[20,-0.03700374506276611],[20,-0.03554656990651383],[20,-0.03389039557981883],[20,-0.03195009608853979],[20,-0.029693182380507322],[20,-0.02713146185685444],[20,-0.024312777695760852],[20,-0.021313895245069728],[20,-0.018233486509101112],[20,-0.015183431866125724],[20,-0.012277521669891697],[20,-0.009618423412723287],[20,-0.007285369083583432],[20,-0.0053255075943026775],[20,-0.003751020500436587],[20,-0.002542380017506543],[20,-0.0016563623616472239],[20,-0.0010363380930728423],[20,-0.0006222428217615484],[20,-0.0003583220548326125],[20,-0.00019780452201905273],[20,-0.00010463650559782036],[20,-5.3025329173469164e-05],[20,-2.5735482685329304e-05],[20,-1.1960440759648127e-05],[20,-5.321844430937677e-06],[20,-2.266861903833196e-06],[20,-9.242604989151137e-07],[20,-3.606926070903e-07],[20,-1.3471856815026613e-07],[20,-4.81553186441958e-08],[20,4.81553186441958e-08],[20,1.3471856815026613e-07],[20,3.606926070903e-07],[20,9.242604989151137e-07],[20,2.266861903833196e-06],[20,5.321844430937677e-06],[20,1.1960440759648127e-05],[20,2.5735482685329304e-05],[20,5.3025329173469164e-05],[20,0.00010463650559782036],[20,0.00019780452201905273],[20,0.0003583220548326125],[20,0.0006222428217615484],[20,0.0010363380930728423],[20,0.0016563623616472239],[20,0.002542380017506543],[20,0.003751020500436587],[20,0.0053255075943026775],[20,0.007285369083583432],[20,0.009618423412723287],[20,0.012277521669891697],[20,0.015183431866125724],[20,0.018233486509101112],[20,0.021313895245069728],[20,0.024312777695760852],[20,0.02713146185685444],[20,0.029693182380507322],[20,0.03195009608853979],[20,0.03389039557981883],[20,0.03554656990651383],[20,0.03700374506276611],[20,0.03840459598835789],[20,0.03994594399090121],[20,0.041862856032526284],[20,0.044399002731739294],[20,0.047766452224167096],[20,0.05210262093706261],[20,0.05743526833906674],[20,0.06366695156494628],[20,0.07058751820155006],[20,0.07791707398053982],[20,0.08537351221027874],[20,0.09275031244138296],[20,0.09998477654648186],[20,0.10719680136792731],[20,0.11468486680981434],[20,0.1228779367157935],[20,0.13225575311944224],[20,0.14326046772614523],[20,0.15622513415283973],[20,0.17133733066780596],[20,0.18864108980488187],[20,0.20806312308666028],[20,0.2294375936064315],[20,0.25250358486556795],[20,0.2768626157434899],[20,0.3019056889983172],[20,0.3267411722128292],[20,0.35016589051215835],[20,0.37071544329511674],[20,0.3868064874285606],[20,0.39695171660621525],[20,0.4],[20,0.3953409927560787],[20,0.3830207768549066],[20,0.36373982065156807],[20,0.338737285630717],[20,0.3095947759466727],[20,0.2780089594092103],[20,0.24558275964542348],[20,0.21367172125506181],[20,0.1833022355155654],[20,0.15515879559783358],[20,0.1296235408391538],[20,0.1068451104592628],[20,0.08681454138835148],[20,0.06943134067049807],[20,0.05455034725328145],[20,0.04200739784826709],[20,0.03162760350421097],[20,0.023223344929883625],[20,0.016589657496267653],[20,0.01150290857206105],[20,0.007725544841317958],[20,0.005016449837991908],[20,0.003144179965116029],[20,0.0018995825078190445],[20,0.0011049321977234599],[20,0.0006181692363255896],[20,0.0003323620381463226],[20,0.00017161136415207132],[20,8.504734447747484e-05],[20,4.043411736009333e-05],[20,1.8434691759139832e-05],[20,8.057167711780515e-06],[20,3.374970614946992e-06],[20,1.354569712470919e-06],[20,5.208298526498473e-07],[20,1.9181678079042258e-07],[20,6.765780333116022e-08]],[[30,-4.668607605848719e-08],[30,-1.5188637861242016e-07],[30,-4.672219134334048e-07],[30,-1.359107400142539e-06],[30,-3.7391865639418725e-06],[30,-9.731446223889682e-06],[30,-2.396413534711656e-05],[30,-5.585576755591797e-05],[30,-0.0001232747852925019],[30,-0.0002577577585556735],[30,-0.0005109539640511279],[30,-0.0009611189711884225],[30,-0.0017175498218547623],[30,-0.0029203938067183027],[30,-0.00473397497467859],[30,-0.007334066383651489],[30,-0.010892911039948931],[30,-0.015568643766630662],[30,-0.021505871766808446],[30,-0.02885007703652372],[30,-0.037770988095772055],[30,-0.04848253180219883],[30,-0.061243968374832404],[30,-0.07633125889110898],[30,-0.09397864614518592],[30,-0.11430303113441763],[30,-0.13723195341962297],[30,-0.16245607597535852],[30,-0.1894196170279524],[30,-0.2173514338923953],[30,-0.2453306692368975],[30,-0.27237711790343505],[30,-0.2975569671054887],[30,-0.3200950806283455],[30,-0.33948074985969257],[30,-0.35554376885166505],[30,-0.36846768276234804],[30,-0.3787086473022913],[30,-0.38681157133342714],[30,-0.393158863094876],[30,-0.39773356421483275],[30,-0.4],[30,-0.3989793866309618],[30,-0.39352626988026174],[30,-0.3827234428648252],[30,-0.36625220251677787],[30,-0.3445955022411675],[30,-0.3189966852043864],[30,-0.29119484321315575],[30,-0.2630415392310652],[30,-0.23613494621108466],[30,-0.21157847185529632],[30,-0.18990461003008752],[30,-0.17113853954886535],[30,-0.15493959028263915],[30,-0.14075973214505752],[30,-0.127983013970347],[30,-0.11603628200149807],[30,-0.10447408889190282],[30,-0.09303818614386339],[30,-0.08168410924991504],[30,-0.07056536527457512],[30,-0.059974140746673225],[30,-0.05025212499685974],[30,-0.04169726903710127],[30,-0.034494803562418457],[30,-0.0286917335038341],[30,-0.024217128220455367],[30,-0.020933028834820667],[30,-0.01869001038605108],[30,-0.017361882401899766],[30,-0.016845561545133125],[30,-0.017029854649061812],[30,-0.017752815390166612],[30,-0.018774006614629888],[30,-0.01978200426675346],[30,-0.020441379981099697],[30,-0.02046472189182979],[30,-0.01968287052476787],[30,-0.018086256871593043],[30,-0.01582187325681656],[30,-0.013148114485851944],[30,-0.010365144562272983],[30,-0.007745084439145483],[30,-0.0054825550064530664],[30,-0.003675304459306562],[30,-0.0023326627725442054],[30,-0.0014014622819589328],[30,-0.0007969300269407633],[30,-0.0004288604237411685],[30,-0.0002183844519095233],[30,-0.00010521883880399341],[30,-4.7961128959508284e-05],[30,-2.0680873802791986e-05],[30,-8.43514740653388e-06],[30,-3.25403837353242e-06],[30,-1.18719484939835e-06],[30,-4.0959547190812085e-07],[30,-1.3362508509199116e-07],[30,-4.121809849018605e-08],[30,4.121809849018605e-08],[30,1.3362508509199116e-07],[30,4.0959547190812085e-07],[30,1.18719484939835e-06],[30,3.25403837353242e-06],[30,8.43514740653388e-06],[30,2.0680873802791986e-05],[30,4.7961128959508284e-05],[30,0.00010521883880399341],[30,0.0002183844519095233],[30,0.0004288604237411685],[30,0.0007969300269407633],[30,0.0014014622819589328],[30,0.0023326627725442054],[30,0.003675304459306562],[30,0.0054825550064530664],[30,0.007745084439145483],[30,0.010365144562272983],[30,0.013148114485851944],[30,0.01582187325681656],[30,0.018086256871593043],[30,0.01968287052476787],[30,0.02046472189182979],[30,0.020441379981099697],[30,0.01978200426675346],[30,0.018774006614629888],[30,0.017752815390166612],[30,0.017029854649061812],[30,0.016845561545133125],[30,0.017361882401899766],[30,0.01869001038605108],[30,0.020933028834820667],[30,0.024217128220455367],[30,0.0286917335038341],[30,0.034494803562418457],[30,0.04169726903710127],[30,0.05025212499685974],[30,0.059974140746673225],[30,0.07056536527457512],[30,0.08168410924991504],[30,0.09303818614386339],[30,0.10447408889190282],[30,0.11603628200149807],[30,0.127983013970347],[30,0.14075973214505752],[30,0.15493959028263915],[30,0.17113853954886535],[30,0.18990461003008752],[30,0.21157847185529632],[30,0.23613494621108466],[30,0.2630415392310652],[30,0.29119484321315575],[30,0.3189966852043864],[30,0.3445955022411675],[30,0.36625220251677787],[30,0.3827234428648252],[30,0.39352626988026174],[30,0.3989793866309618],[30,0.4],[30,0.39773356421483275],[30,0.393158863094876],[30,0.38681157133342714],[30,0.3787086473022913],[30,0.36846768276234804],[30,0.35554376885166505],[30,0.33948074985969257],[30,0.3200950806283455],[30,0.2975569671054887],[30,0.27237711790343505],[30,0.2453306692368975],[30,0.2173514338923953],[30,0.1894196170279524],[30,0.16245607597535852],[30,0.13723195341962297],[30,0.11430303113441763],[30,0.09397864614518592],[30,0.07633125889110898],[30,0.061243968374832404],[30,0.04848253180219883],[30,0.037770988095772055],[30,0.02885007703652372],[30,0.021505871766808446],[30,0.015568643766630662],[30,0.010892911039948931],[30,0.007334066383651489],[30,0.00473397497467859],[30,0.0029203938067183027],[30,0.0017175498218547623],[30,0.0009611189711884225],[30,0.0005109539640511279],[30,0.0002577577585556735],[30,0.0001232747852925019],[30,5.585576755591797e-05],[30,2.396413534711656e-05],[30,9.731446223889682e-06],[30,3.7391865639418725e-06],[30,1.359107400142539e-06],[30,4.672219134334048e-07],[30,1.5188637861242016e-07],[30,4.668607605848719e-08]],[[40,-4.0506412595705875e-08],[40,-1.243170231781989e-07],[40,-3.6208280476915603e-07],[40,-1.000894341275193e-06],[40,-2.626113739243774e-06],[40,-6.540904542592894e-06],[40,-1.5467875129703224e-05],[40,-3.4736149764661793e-05],[40,-7.409794526784454e-05],[40,-0.00015019387606547363],[40,-0.0002894074277214207],[40,-0.0005304212626124331],[40,-0.0009253244911708639],[40,-0.0015378641436325944],[40,-0.002437694238212716],[40,-0.003690451924312955],[40,-0.005345054888229302],[40,-0.0074212066952550546],[40,-0.009900894352156613],[40,-0.012727046779146626],[40,-0.01581059608226392],[40,-0.019044916464244763],[40,-0.022325350466194892],[40,-0.02557202389162934],[40,-0.028755811097684204],[40,-0.031928357430481856],[40,-0.035255683713241046],[40,-0.039050721657475335],[40,-0.04379490642442876],[40,-0.05013578026415677],[40,-0.05884908658906301],[40,-0.07076060438950457],[40,-0.08663301235770675],[40,-0.10703288870999017],[40,-0.13219925995452173],[40,-0.16193623031257143],[40,-0.19554851374090965],[40,-0.23183201459969052],[40,-0.26912426042608567],[40,-0.3054131673920456],[40,-0.33849775261828446],[40,-0.36619016182324604],[40,-0.3865432570001597],[40,-0.39808094139950917],[40,-0.4],[40,-0.39230559888012007],[40,-0.37584290254257247],[40,-0.3521996787710156],[40,-0.3234808842440744],[40,-0.2919910562275016],[40,-0.2598920421036323],[40,-0.22891772526652826],[40,-0.20021428560150756],[40,-0.1743358336087929],[40,-0.15137509574737823],[40,-0.13116771861153614],[40,-0.1134933232315371],[40,-0.09821093405474565],[40,-0.08530121698763665],[40,-0.07482576137730079],[40,-0.0668390191296172],[40,-0.06129504608856802],[40,-0.05798226073516556],[40,-0.05650358626905634],[40,-0.05630424449504229],[40,-0.05673857027391367],[40,-0.05716032650364544],[40,-0.05701702978504002],[40,-0.055927794869115456],[40,-0.053727255049362745],[40,-0.05046575601913396],[40,-0.04636693726013784],[40,-0.04175492207679033],[40,-0.036971059190237875],[40,-0.032301932616786946],[40,-0.027935581201042666],[40,-0.023953108719978376],[40,-0.020351410059370082],[40,-0.017083583313197377],[40,-0.014099965333976606],[40,-0.011375645112806277],[40,-0.008918031893612868],[40,-0.006756877140932248],[40,-0.004925269880206595],[40,-0.00344149831429239],[40,-0.0022987565000862943],[40,-0.0014647582248842616],[40,-0.0008890076446322042],[40,-0.0005133712804296263],[40,-0.0002818368754400558],[40,-0.0001470128409346773],[40,-7.283251219263827e-05],[40,-3.4259400260720576e-05],[40,-1.5297721673393407e-05],[40,-6.483362396602297e-06],[40,-2.607671946140196e-06],[40,-9.952921880189594e-07],[40,-3.604695852397585e-07],[40,-1.23876608503202e-07],[40,-4.039241487829368e-08],[40,4.039241487829368e-08],[40,1.23876608503202e-07],[40,3.604695852397585e-07],[40,9.952921880189594e-07],[40,2.607671946140196e-06],[40,6.483362396602297e-06],[40,1.5297721673393407e-05],[40,3.4259400260720576e-05],[40,7.283251219263827e-05],[40,0.0001470128409346773],[40,0.0002818368754400558],[40,0.0005133712804296263],[40,0.0008890076446322042],[40,0.0014647582248842616],[40,0.0022987565000862943],[40,0.00344149831429239],[40,0.004925269880206595],[40,0.006756877140932248],[40,0.008918031893612868],[40,0.011375645112806277],[40,0.014099965333976606],[40,0.017083583313197377],[40,0.020351410059370082],[40,0.023953108719978376],[40,0.027935581201042666],[40,0.032301932616786946],[40,0.036971059190237875],[40,0.04175492207679033],[40,0.04636693726013784],[40,0.05046575601913396],[40,0.053727255049362745],[40,0.055927794869115456],[40,0.05701702978504002],[40,0.05716032650364544],[40,0.05673857027391367],[40,0.05630424449504229],[40,0.05650358626905634],[40,0.05798226073516556],[40,0.06129504608856802],[40,0.0668390191296172],[40,0.07482576137730079],[40,0.08530121698763665],[40,0.09821093405474565],[40,0.1134933232315371],[40,0.13116771861153614],[40,0.15137509574737823],[40,0.1743358336087929],[40,0.20021428560150756],[40,0.22891772526652826],[40,0.2598920421036323],[40,0.2919910562275016],[40,0.3234808842440744],[40,0.3521996787710156],[40,0.37584290254257247],[40,0.39230559888012007],[40,0.4],[40,0.39808094139950917],[40,0.3865432570001597],[40,0.36619016182324604],[40,0.33849775261828446],[40,0.3054131673920456],[40,0.26912426042608567],[40,0.23183201459969052],[40,0.19554851374090965],[40,0.16193623031257143],[40,0.13219925995452173],[40,0.10703288870999017],[40,0.08663301235770675],[40,0.07076060438950457],[40,0.05884908658906301],[40,0.05013578026415677],[40,0.04379490642442876],[40,0.039050721657475335],[40,0.035255683713241046],[40,0.031928357430481856],[40,0.028755811097684204],[40,0.02557202389162934],[40,0.022325350466194892],[40,0.019044916464244763],[40,0.01581059608226392],[40,0.012727046779146626],[40,0.009900894352156613],[40,0.0074212066952550546],[40,0.005345054888229302],[40,0.003690451924312955],[40,0.002437694238212716],[40,0.0015378641436325944],[40,0.0009253244911708639],[40,0.0005304212626124331],[40,0.0002894074277214207],[40,0.00015019387606547363],[40,7.409794526784454e-05],[40,3.4736149764661793e-05],[40,1.5467875129703224e-05],[40,6.540904542592894e-06],[40,2.626113739243774e-06],[40,1.000894341275193e-06],[40,3.6208280476915603e-07],[40,1.243170231781989e-07],[40,4.0506412595705875e-08]],[[50,-8.053037401615797e-08],[50,-2.2766166225641946e-07],[50,-6.174069583769215e-07],[50,-1.6063995116827865e-06],[50,-4.010452353151662e-06],[50,-9.608564624383333e-06],[50,-2.2096795292959133e-05],[50,-4.878671065465249e-05],[50,-0.00010344040664069925],[50,-0.0002106850345558021],[50,-0.0004123810931692438],[50,-0.0007760444179592821],[50,-0.0014048810742976832],[50,-0.0024482108475725765],[50,-0.0041101936607170824],[50,-0.006654152527553106],[50,-0.010399800363223351],[50,-0.015711613500350125],[50,-0.022978404127117727],[50,-0.0325862983677863],[50,-0.04488890594937592],[50,-0.06017854665525],[50,-0.07866061373023224],[50,-0.10043013571627704],[50,-0.1254469308227273],[50,-0.1535053130709678],[50,-0.1841972448245771],[50,-0.21687366756495552],[50,-0.2506152938333217],[50,-0.2842283328822378],[50,-0.31627990274122686],[50,-0.3451814848230882],[50,-0.36931814269474084],[50,-0.38720941513403573],[50,-0.3976782748874917],[50,-0.4],[50,-0.3940044333111688],[50,-0.38011253059478345],[50,-0.3592996624198234],[50,-0.3329913424968991],[50,-0.3029090530058852],[50,-0.270891973340457],[50,-0.23872286784431976],[50,-0.20798269656158355],[50,-0.17994982428718465],[50,-0.1555485056002661],[50,-0.13534075310887297],[50,-0.11954860952508123],[50,-0.10809194784620904],[50,-0.10063021665049939],[50,-0.09660326392590105],[50,-0.09527351742971313],[50,-0.09577619944624471],[50,-0.09718382428576672],[50,-0.09858594115686185],[50,-0.09917714054181116],[50,-0.09833931757429973],[50,-0.09570148099743815],[50,-0.09116366377452047],[50,-0.08487983397938836],[50,-0.07720505186294113],[50,-0.06862060500798492],[50,-0.059654515568321166],[50,-0.05081279947975477],[50,-0.04253061161767241],[50,-0.035144838213769174],[50,-0.028883786342123276],[50,-0.02386719914417184],[50,-0.0201109871653704],[50,-0.017534403223283413],[50,-0.0159708142677123],[50,-0.015184943722153685],[50,-0.014898676769758357],[50,-0.014824662169831627],[50,-0.014703367073260271],[50,-0.014336619940079688],[50,-0.01361028981594585],[50,-0.01250095321959728],[50,-0.01106548328531998],[50,-0.009416991859207753],[50,-0.0076938630845266726],[50,-0.006029665938013068],[50,-0.004530381603372906],[50,-0.0032623832248777998],[50,-0.002251196244746617],[50,-0.0014884064223424241],[50,-0.0009428234012696078],[50,-0.0005721662061194169],[50,-0.00033264916481670376],[50,-0.00018527490769133315],[50,-9.885731177209157e-05],[50,-5.0531319105754056e-05],[50,-2.474404401548344e-05],[50,-1.1607482857947457e-05],[50,-5.21629585858997e-06],[50,-2.2456540304198745e-06],[50,-9.261466329061271e-07],[50,-3.6590875843229276e-07],[50,-1.3849112196997285e-07],[50,-5.021426307111234e-08],[50,5.021426307111234e-08],[50,1.3849112196997285e-07],[50,3.6590875843229276e-07],[50,9.261466329061271e-07],[50,2.2456540304198745e-06],[50,5.21629585858997e-06],[50,1.1607482857947457e-05],[50,2.474404401548344e-05],[50,5.0531319105754056e-05],[50,9.885731177209157e-05],[50,0.00018527490769133315],[50,0.00033264916481670376],[50,0.0005721662061194169],[50,0.0009428234012696078],[50,0.0014884064223424241],[50,0.002251196244746617],[50,0.0032623832248777998],[50,0.004530381603372906],[50,0.006029665938013068],[50,0.0076938630845266726],[50,0.009416991859207753],[50,0.01106548328531998],[50,0.01250095321959728],[50,0.01361028981594585],[50,0.014336619940079688],[50,0.014703367073260271],[50,0.014824662169831627],[50,0.014898676769758357],[50,0.015184943722153685],[50,0.0159708142677123],[50,0.017534403223283413],[50,0.0201109871653704],[50,0.02386719914417184],[50,0.028883786342123276],[50,0.035144838213769174],[50,0.04253061161767241],[50,0.05081279947975477],[50,0.059654515568321166],[50,0.06862060500798492],[50,0.07720505186294113],[50,0.08487983397938836],[50,0.09116366377452047],[50,0.09570148099743815],[50,0.09833931757429973],[50,0.09917714054181116],[50,0.09858594115686185],[50,0.09718382428576672],[50,0.09577619944624471],[50,0.09527351742971313],[50,0.09660326392590105],[50,0.10063021665049939],[50,0.10809194784620904],[50,0.11954860952508123],[50,0.13534075310887297],[50,0.1555485056002661],[50,0.17994982428718465],[50,0.20798269656158355],[50,0.23872286784431976],[50,0.270891973340457],[50,0.3029090530058852],[50,0.3329913424968991],[50,0.3592996624198234],[50,0.38011253059478345],[50,0.3940044333111688],[50,0.4],[50,0.3976782748874917],[50,0.38720941513403573],[50,0.36931814269474084],[50,0.3451814848230882],[50,0.31627990274122686],[50,0.2842283328822378],[50,0.2506152938333217],[50,0.21687366756495552],[50,0.1841972448245771],[50,0.1535053130709678],[50,0.1254469308227273],[50,0.10043013571627704],[50,0.07866061373023224],[50,0.06017854665525],[50,0.04488890594937592],[50,0.0325862983677863],[50,0.022978404127117727],[50,0.015711613500350125],[50,0.010399800363223351],[50,0.006654152527553106],[50,0.0041101936607170824],[50,0.0024482108475725765],[50,0.0014048810742976832],[50,0.0007760444179592821],[50,0.0004123810931692438],[50,0.0002106850345558021],[50,0.00010344040664069925],[50,4.878671065465249e-05],[50,2.2096795292959133e-05],[50,9.608564624383333e-06],[50,4.010452353151662e-06],[50,1.6063995116827865e-06],[50,6.174069583769215e-07],[50,2.2766166225641946e-07],[50,8.053037401615797e-08]],[[60,-1.2594077687873044e-07],[60,-3.0672614833645445e-07],[60,-7.250819495615458e-07],[60,-1.6639397482735851e-06],[60,-3.7074121484645674e-06],[60,-8.021620632991212e-06],[60,-1.6857517065032827e-05],[60,-3.4415572345869336e-05],[60,-6.8272154278895e-05],[60,-0.00013163293521718122],[60,-0.0002467350151656625],[60,-0.0004497412859294524],[60,-0.000797421767236717],[60,-0.0013757539577107115],[60,-0.0023102562798955335],[60,-0.003777370586070985],[60,-0.006015541631543157],[60,-0.009333867139730348],[60,-0.014115441151168473],[60,-0.02081198061324227],[60,-0.02992625145545423],[60,-0.041979441341598644],[60,-0.05746215027409393],[60,-0.07677014188270118],[60,-0.10012926103699074],[60,-0.127517553168814],[60,-0.15859591917957347],[60,-0.19266070969670568],[60,-0.22863158252165464],[60,-0.26508503723435334],[60,-0.3003381606102602],[60,-0.3325788965193659],[60,-0.36003004188357596],[60,-0.3811262033559554],[60,-0.39467825634491066],[60,-0.4],[60,-0.3969771314187185],[60,-0.38606838933267074],[60,-0.36824053301772675],[60,-0.34484991226580974],[60,-0.3174911881616708],[60,-0.2878367516466928],[60,-0.2574884612625407],[60,-0.22785771192062307],[60,-0.20008255653727813],[60,-0.17498366379739433],[60,-0.1530557282457155],[60,-0.13448805243908177],[60,-0.11920705696623567],[60,-0.1069336400101973],[60,-0.0972487955269279],[60,-0.08966124013742514],[60,-0.08367098124087549],[60,-0.07882310818975638],[60,-0.07474700926454704],[60,-0.07117792894354517],[60,-0.06796016449693508],[60,-0.06503382023912642],[60,-0.06240930050392027],[60,-0.060135116247218345],[60,-0.058264862795017136],[60,-0.05682849202331794],[60,-0.05581160357260179],[60,-0.05514485131806887],[60,-0.05470404006411203],[60,-0.05432021520777811],[60,-0.05379799649668481],[60,-0.05293949405604853],[60,-0.05157036610261645],[60,-0.049564069636782275],[60,-0.046860351340222255],[60,-0.04347472780487549],[60,-0.039497140344495474],[60,-0.035079918497951966],[60,-0.03041721223326644],[60,-0.025719642598521615],[60,-0.021188661936097822],[60,-0.016994839956894204],[60,-0.01326312796652985],[60,-0.010066465265384067],[60,-0.0074273484425717755],[60,-0.005325606567547002],[60,-0.0037098696968884608],[60,-0.002510132868268674],[60,-0.001649271318521517],[60,-0.0010521205897373726],[60,-0.0006515491934790506],[60,-0.00039162941432381636],[60,-0.00022845172329813293],[60,-0.00012931673956271378],[60,-7.102496567145658e-05],[60,-3.784618838529578e-05],[60,-1.956367694876195e-05],[60,-9.809832176705279e-06],[60,-4.771157879491242e-06],[60,-2.2506502976237054e-06],[60,-1.0296449829365903e-06],[60,-4.5681211603014847e-07],[60,-1.9653308271203242e-07],[60,-8.198998413808289e-08],[60,8.198998413808289e-08],[60,1.9653308271203242e-07],[60,4.5681211603014847e-07],[60,1.0296449829365903e-06],[60,2.2506502976237054e-06],[60,4.771157879491242e-06],[60,9.809832176705279e-06],[60,1.956367694876195e-05],[60,3.784618838529578e-05],[60,7.102496567145658e-05],[60,0.00012931673956271378],[60,0.00022845172329813293],[60,0.00039162941432381636],[60,0.0006515491934790506],[60,0.0010521205897373726],[60,0.001649271318521517],[60,0.002510132868268674],[60,0.0037098696968884608],[60,0.005325606567547002],[60,0.0074273484425717755],[60,0.010066465265384067],[60,0.01326312796652985],[60,0.016994839956894204],[60,0.021188661936097822],[60,0.025719642598521615],[60,0.03041721223326644],[60,0.035079918497951966],[60,0.039497140344495474],[60,0.04347472780487549],[60,0.046860351340222255],[60,0.049564069636782275],[60,0.05157036610261645],[60,0.05293949405604853],[60,0.05379799649668481],[60,0.05432021520777811],[60,0.05470404006411203],[60,0.05514485131806887],[60,0.05581160357260179],[60,0.05682849202331794],[60,0.058264862795017136],[60,0.060135116247218345],[60,0.06240930050392027],[60,0.06503382023912642],[60,0.06796016449693508],[60,0.07117792894354517],[60,0.07474700926454704],[60,0.07882310818975638],[60,0.08367098124087549],[60,0.08966124013742514],[60,0.0972487955269279],[60,0.1069336400101973],[60,0.11920705696623567],[60,0.13448805243908177],[60,0.1530557282457155],[60,0.17498366379739433],[60,0.20008255653727813],[60,0.22785771192062307],[60,0.2574884612625407],[60,0.2878367516466928],[60,0.3174911881616708],[60,0.34484991226580974],[60,0.36824053301772675],[60,0.38606838933267074],[60,0.3969771314187185],[60,0.4],[60,0.39467825634491066],[60,0.3811262033559554],[60,0.36003004188357596],[60,0.3325788965193659],[60,0.3003381606102602],[60,0.26508503723435334],[60,0.22863158252165464],[60,0.19266070969670568],[60,0.15859591917957347],[60,0.127517553168814],[60,0.10012926103699074],[60,0.07677014188270118],[60,0.05746215027409393],[60,0.041979441341598644],[60,0.02992625145545423],[60,0.02081198061324227],[60,0.014115441151168473],[60,0.009333867139730348],[60,0.006015541631543157],[60,0.003777370586070985],[60,0.0023102562798955335],[60,0.0013757539577107115],[60,0.000797421767236717],[60,0.0004497412859294524],[60,0.0002467350151656625],[60,0.00013163293521718122],[60,6.8272154278895e-05],[60,3.4415572345869336e-05],[60,1.6857517065032827e-05],[60,8.021620632991212e-06],[60,3.7074121484645674e-06],[60,1.6639397482735851e-06],[60,7.250819495615458e-07],[60,3.0672614833645445e-07],[60,1.2594077687873044e-07]],[[70,-8.940277473194502e-08],[70,-2.5182541279435965e-07],[70,-6.785437628082157e-07],[70,-1.749141889273401e-06],[70,-4.314115717638283e-06],[70,-1.0182251817776648e-05],[70,-2.300203946092767e-05],[70,-4.974731349706907e-05],[70,-0.00010303775531455165],[70,-0.00020447057477258565],[70,-0.0003889645163997386],[70,-0.0007098026492376226],[70,-0.0012436563071289227],[70,-0.0020945280646573763],[70,-0.003395497037181182],[70,-0.00530759972401521],[70,-0.008016166208820936],[70,-0.011726146228783813],[70,-0.016658739071398577],[70,-0.023051212088143248],[70,-0.031159752113871488],[70,-0.04126199417175912],[70,-0.05365293707313743],[70,-0.06862716699609255],[70,-0.08644296319802308],[70,-0.10726965769803219],[70,-0.13112644045024505],[70,-0.15782561456423694],[70,-0.18693385956865954],[70,-0.21776126782450125],[70,-0.24938192513488727],[70,-0.2806845352403444],[70,-0.3104487095760311],[70,-0.337441361793546],[70,-0.3605258482667492],[70,-0.3787723475544384],[70,-0.3915523513793881],[70,-0.3985967292204502],[70,-0.4],[70,-0.39616504732104385],[70,-0.38769973376602],[70,-0.3752928240843074],[70,-0.35960370447330725],[70,-0.3411944967762452],[70,-0.32051636316234067],[70,-0.29794153380198696],[70,-0.27381790049895205],[70,-0.24851976220670335],[70,-0.22247626955392164],[70,-0.19617262780429726],[70,-0.17013069349869606],[70,-0.14488023642664227],[70,-0.12092966905144442],[70,-0.09873932736334348],[70,-0.07869621399484762],[70,-0.061089080264419164],[70,-0.04608600450669495],[70,-0.03372013080099457],[70,-0.023890000736456488],[70,-0.01637799757915868],[70,-0.010885212392020338],[70,-0.007076090304942145],[70,-0.004623627872460545],[70,-0.003246310671912221],[70,-0.002730620673833013],[70,-0.0029364051230953148],[70,-0.0037855749402813375],[70,-0.005237126059747851],[70,-0.007253558588597744],[70,-0.009765631030759865],[70,-0.012643769613053763],[70,-0.015684526671047343],[70,-0.01861829113184408],[70,-0.021139660357176966],[70,-0.022955357845864503],[70,-0.023838401584161877],[70,-0.023673918991670498],[70,-0.02248333679739236],[70,-0.020419643481092035],[70,-0.017735035106393113],[70,-0.014730326261064134],[70,-0.011700086294894394],[70,-0.008887142388117933],[70,-0.006455525232387427],[70,-0.00448432827306144],[70,-0.002978925083119447],[70,-0.0018924226374783058],[70,-0.0011496696245338661],[70,-0.0006679198472870576],[70,-0.0003710838123949464],[70,-0.0001971587427209904],[70,-0.0001001743284077787],[70,-4.867357080506549e-05],[70,-2.2616549441029032e-05],[70,-1.0049763773881551e-05],[70,-4.270529537097044e-06],[70,-1.7354175127240738e-06],[70,-6.74407809620105e-07],[70,-2.5063260901437537e-07],[70,-8.907358428754739e-08],[70,8.907358428754739e-08],[70,2.5063260901437537e-07],[70,6.74407809620105e-07],[70,1.7354175127240738e-06],[70,4.270529537097044e-06],[70,1.0049763773881551e-05],[70,2.2616549441029032e-05],[70,4.867357080506549e-05],[70,0.0001001743284077787],[70,0.0001971587427209904],[70,0.0003710838123949464],[70,0.0006679198472870576],[70,0.0011496696245338661],[70,0.0018924226374783058],[70,0.002978925083119447],[70,0.00448432827306144],[70,0.006455525232387427],[70,0.008887142388117933],[70,0.011700086294894394],[70,0.014730326261064134],[70,0.017735035106393113],[70,0.020419643481092035],[70,0.02248333679739236],[70,0.023673918991670498],[70,0.023838401584161877],[70,0.022955357845864503],[70,0.021139660357176966],[70,0.01861829113184408],[70,0.015684526671047343],[70,0.012643769613053763],[70,0.009765631030759865],[70,0.007253558588597744],[70,0.005237126059747851],[70,0.0037855749402813375],[70,0.0029364051230953148],[70,0.002730620673833013],[70,0.003246310671912221],[70,0.004623627872460545],[70,0.007076090304942145],[70,0.010885212392020338],[70,0.01637799757915868],[70,0.023890000736456488],[70,0.03372013080099457],[70,0.04608600450669495],[70,0.061089080264419164],[70,0.07869621399484762],[70,0.09873932736334348],[70,0.12092966905144442],[70,0.14488023642664227],[70,0.17013069349869606],[70,0.19617262780429726],[70,0.22247626955392164],[70,0.24851976220670335],[70,0.27381790049895205],[70,0.29794153380198696],[70,0.32051636316234067],[70,0.3411944967762452],[70,0.35960370447330725],[70,0.3752928240843074],[70,0.38769973376602],[70,0.39616504732104385],[70,0.4],[70,0.3985967292204502],[70,0.3915523513793881],[70,0.3787723475544384],[70,0.3605258482667492],[70,0.337441361793546],[70,0.3104487095760311],[70,0.2806845352403444],[70,0.24938192513488727],[70,0.21776126782450125],[70,0.18693385956865954],[70,0.15782561456423694],[70,0.13112644045024505],[70,0.10726965769803219],[70,0.08644296319802308],[70,0.06862716699609255],[70,0.05365293707313743],[70,0.04126199417175912],[70,0.031159752113871488],[70,0.023051212088143248],[70,0.016658739071398577],[70,0.011726146228783813],[70,0.008016166208820936],[70,0.00530759972401521],[70,0.003395497037181182],[70,0.0020945280646573763],[70,0.0012436563071289227],[70,0.0007098026492376226],[70,0.0003889645163997386],[70,0.00020447057477258565],[70,0.00010303775531455165],[70,4.974731349706907e-05],[70,2.300203946092767e-05],[70,1.0182251817776648e-05],[70,4.314115717638283e-06],[70,1.749141889273401e-06],[70,6.785437628082157e-07],[70,2.5182541279435965e-07],[70,8.940277473194502e-08]],[[80,-1.078316629391454e-07],[80,-2.565873516266846e-07],[80,-5.928881767570047e-07],[80,-1.330431038278117e-06],[80,-2.8995508987198676e-06],[80,-6.138021827997991e-06],[80,-1.2622061422032901e-05],[80,-2.5216576747263677e-05],[80,-4.894986742089868e-05],[80,-9.233976770663031e-05],[80,-0.00016930437361121418],[80,-0.0003017654123944334],[80,-0.0005229783473087573],[80,-0.0008814864891525209],[80,-0.001445395082614575],[80,-0.0023064163832061456],[80,-0.0035828990928443052],[80,-0.005420905902727057],[80,-0.007992437873364892],[80,-0.011490206321535117],[80,-0.016118947586518023],[80,-0.022084090603674746],[80,-0.02957942791574446],[80,-0.03877601257311711],[80,-0.04981448402566375],[80,-0.06280218820278237],[80,-0.07781480563893685],[80,-0.09490007214214395],[80,-0.11407923154794264],[80,-0.13534094461528823],[80,-0.15862324340392067],[80,-0.18378208842576388],[80,-0.2105497792097856],[80,-0.23849174352399394],[80,-0.2669743971119398],[80,-0.2951580853554501],[80,-0.32202643216358556],[80,-0.3464566900082009],[80,-0.36732620339882033],[80,-0.3836402542880736],[80,-0.3946591690608892],[80,-0.4],[80,-0.3996914783659485],[80,-0.3941697482256693],[80,-0.384214561504024],[80,-0.3708381171062371],[80,-0.3551484312007014],[80,-0.3382136581774426],[80,-0.32095213251988824],[80,-0.3040656420920434],[80,-0.2880225301472705],[80,-0.27308546853227106],[80,-0.25936908785861174],[80,-0.24690740822920854],[80,-0.23571128355867066],[80,-0.2258014503035488],[80,-0.21721148354232836],[80,-0.20996439368022599],[80,-0.20403407264576714],[80,-0.19930638784742302],[80,-0.19555378058090828],[80,-0.19243250142372229],[80,-0.18950489245286664],[80,-0.18628255194992982],[80,-0.18228157680061816],[80,-0.17707928320436103],[80,-0.17036276044234352],[80,-0.16196244577357155],[80,-0.15186744102237595],[80,-0.14022250312397846],[80,-0.12730896606158906],[80,-0.1135132171988754],[80,-0.09928700368234625],[80,-0.08510409447205808],[80,-0.07141784392206456],[80,-0.05862397041626514],[80,-0.04703223882337876],[80,-0.03684961217205778],[80,-0.028175867770394405],[80,-0.02101089899076723],[80,-0.015271310335321413],[80,-0.010812814096847591],[80,-0.007454568278155969],[80,-0.005001968675573969],[80,-0.0032653426884507205],[80,-0.002073194198654381],[80,-0.0012798125429300858],[80,-0.000767954442965879],[80,-0.0004478255789464678],[80,-0.00025373520174563587],[80,-0.00013966123749965914],[80,-7.466702778963578e-05],[80,-3.8768807298262344e-05],[80,-1.954729265373502e-05],[80,-9.569685188313342e-06],[80,-4.548594695708517e-06],[80,-2.0989001580815395e-06],[80,-9.401815935589217e-07],[80,-4.088002413427151e-07],[80,-1.7253096691504504e-07],[80,1.7253096691504504e-07],[80,4.088002413427151e-07],[80,9.401815935589217e-07],[80,2.0989001580815395e-06],[80,4.548594695708517e-06],[80,9.569685188313342e-06],[80,1.954729265373502e-05],[80,3.8768807298262344e-05],[80,7.466702778963578e-05],[80,0.00013966123749965914],[80,0.00025373520174563587],[80,0.0004478255789464678],[80,0.000767954442965879],[80,0.0012798125429300858],[80,0.002073194198654381],[80,0.0032653426884507205],[80,0.005001968675573969],[80,0.007454568278155969],[80,0.010812814096847591],[80,0.015271310335321413],[80,0.02101089899076723],[80,0.028175867770394405],[80,0.03684961217205778],[80,0.04703223882337876],[80,0.05862397041626514],[80,0.07141784392206456],[80,0.08510409447205808],[80,0.09928700368234625],[80,0.1135132171988754],[80,0.12730896606158906],[80,0.14022250312397846],[80,0.15186744102237595],[80,0.16196244577357155],[80,0.17036276044234352],[80,0.17707928320436103],[80,0.18228157680061816],[80,0.18628255194992982],[80,0.18950489245286664],[80,0.19243250142372229],[80,0.19555378058090828],[80,0.19930638784742302],[80,0.20403407264576714],[80,0.20996439368022599],[80,0.21721148354232836],[80,0.2258014503035488],[80,0.23571128355867066],[80,0.24690740822920854],[80,0.25936908785861174],[80,0.27308546853227106],[80,0.2880225301472705],[80,0.3040656420920434],[80,0.32095213251988824],[80,0.3382136581774426],[80,0.3551484312007014],[80,0.3708381171062371],[80,0.384214561504024],[80,0.3941697482256693],[80,0.3996914783659485],[80,0.4],[80,0.3946591690608892],[80,0.3836402542880736],[80,0.36732620339882033],[80,0.3464566900082009],[80,0.32202643216358556],[80,0.2951580853554501],[80,0.2669743971119398],[80,0.23849174352399394],[80,0.2105497792097856],[80,0.18378208842576388],[80,0.15862324340392067],[80,0.13534094461528823],[80,0.11407923154794264],[80,0.09490007214214395],[80,0.07781480563893685],[80,0.06280218820278237],[80,0.04981448402566375],[80,0.03877601257311711],[80,0.02957942791574446],[80,0.022084090603674746],[80,0.016118947586518023],[80,0.011490206321535117],[80,0.007992437873364892],[80,0.005420905902727057],[80,0.0035828990928443052],[80,0.0023064163832061456],[80,0.001445395082614575],[80,0.0008814864891525209],[80,0.0005229783473087573],[80,0.0003017654123944334],[80,0.00016930437361121418],[80,9.233976770663031e-05],[80,4.894986742089868e-05],[80,2.5216576747263677e-05],[80,1.2622061422032901e-05],[80,6.138021827997991e-06],[80,2.8995508987198676e-06],[80,1.330431038278117e-06],[80,5.928881767570047e-07],[80,2.565873516266846e-07],[80,1.078316629391454e-07]],[[90,-1.4969521731508015e-07],[90,-3.8003551313220637e-07],[90,-9.323780451323295e-07],[90,-2.210737670341414e-06],[90,-5.0662664114932335e-06],[90,-1.1222145132342273e-05],[90,-2.4029010150644973e-05],[90,-4.974020669331337e-05],[90,-9.954879651795305e-05],[90,-0.00019265172943883687],[90,-0.0003605606956551291],[90,-0.0006527140765411859],[90,-0.0011431161969543975],[90,-0.0019372283094932223],[90,-0.0031777182294583915],[90,-0.005047096673581052],[90,-0.007764979202272544],[90,-0.011578010695680202],[90,-0.016741608874097966],[90,-0.023494646920121317],[90,-0.032030680895204604],[90,-0.04247163354126726],[90,-0.054851021842393655],[90,-0.06911297444552104],[90,-0.08513001700094615],[90,-0.1027373256358291],[90,-0.1217751956011146],[90,-0.1421268042681411],[90,-0.1637369138232657],[90,-0.18660012798456735],[90,-0.21071450105241954],[90,-0.2360060437096561],[90,-0.262239305408653],[90,-0.28893588382882934],[90,-0.3153242839639834],[90,-0.3403402400983482],[90,-0.36268717063756706],[90,-0.3809538893106561],[90,-0.39377384830134887],[90,-0.4],[90,-0.398864335716452],[90,-0.3900927521909139],[90,-0.37395406311782126],[90,-0.35123497494075284],[90,-0.3231475423687169],[90,-0.29118828343815945],[90,-0.25697560789677765],[90,-0.22209295826624184],[90,-0.18795964922344305],[90,-0.15574217022785916],[90,-0.12630882931899587],[90,-0.10022278804161111],[90,-0.07776420436157055],[90,-0.058971296798797646],[90,-0.043691530397697215],[90,-0.031636342188053904],[90,-0.022434753577405195],[90,-0.015682401010921592],[90,-0.010983080985719615],[90,-0.007980264686513465],[90,-0.0063765852417076475],[90,-0.005940242361940261],[90,-0.006498607920179595],[90,-0.007920919315901843],[90,-0.010093605525619472],[90,-0.01289322818533256],[90,-0.016162889201528707],[90,-0.019697874717205383],[90,-0.023244976006902777],[90,-0.026517318900787734],[90,-0.02922302558219498],[90,-0.031102430563540687],[90,-0.03196591641721843],[90,-0.031723650013621076],[90,-0.030400018996918483],[90,-0.028129097307699236],[90,-0.025132028097463257],[90,-0.0216814581445207],[90,-0.018060858939724003],[90,-0.014527041532703129],[90,-0.011282485322926816],[90,-0.008460989976992104],[90,-0.006126696697390759],[90,-0.004283713093583329],[90,-0.0028920324620725344],[90,-0.0018852751522330964],[90,-0.0011866840797050042],[90,-0.0007212474331921619],[90,-0.00042327462857665726],[90,-0.00023985511595692665],[90,-0.00013123948789571957],[90,-6.933760876526382e-05],[90,-3.5372192945823726e-05],[90,-1.742384113187896e-05],[90,-8.28732960448167e-06],[90,-3.80604670649738e-06],[90,-1.6878055363009164e-06],[90,-7.227023931556694e-07],[90,-2.9880328702402393e-07],[90,-1.19288901866311e-07],[90,1.19288901866311e-07],[90,2.9880328702402393e-07],[90,7.227023931556694e-07],[90,1.6878055363009164e-06],[90,3.80604670649738e-06],[90,8.28732960448167e-06],[90,1.742384113187896e-05],[90,3.5372192945823726e-05],[90,6.933760876526382e-05],[90,0.00013123948789571957],[90,0.00023985511595692665],[90,0.00042327462857665726],[90,0.0007212474331921619],[90,0.0011866840797050042],[90,0.0018852751522330964],[90,0.0028920324620725344],[90,0.004283713093583329],[90,0.006126696697390759],[90,0.008460989976992104],[90,0.011282485322926816],[90,0.014527041532703129],[90,0.018060858939724003],[90,0.0216814581445207],[90,0.025132028097463257],[90,0.028129097307699236],[90,0.030400018996918483],[90,0.031723650013621076],[90,0.03196591641721843],[90,0.031102430563540687],[90,0.02922302558219498],[90,0.026517318900787734],[90,0.023244976006902777],[90,0.019697874717205383],[90,0.016162889201528707],[90,0.01289322818533256],[90,0.010093605525619472],[90,0.007920919315901843],[90,0.006498607920179595],[90,0.005940242361940261],[90,0.0063765852417076475],[90,0.007980264686513465],[90,0.010983080985719615],[90,0.015682401010921592],[90,0.022434753577405195],[90,0.031636342188053904],[90,0.043691530397697215],[90,0.058971296798797646],[90,0.07776420436157055],[90,0.10022278804161111],[90,0.12630882931899587],[90,0.15574217022785916],[90,0.18795964922344305],[90,0.22209295826624184],[90,0.25697560789677765],[90,0.29118828343815945],[90,0.3231475423687169],[90,0.35123497494075284],[90,0.37395406311782126],[90,0.3900927521909139],[90,0.398864335716452],[90,0.4],[90,0.39377384830134887],[90,0.3809538893106561],[90,0.36268717063756706],[90,0.3403402400983482],[90,0.3153242839639834],[90,0.28893588382882934],[90,0.262239305408653],[90,0.2360060437096561],[90,0.21071450105241954],[90,0.18660012798456735],[90,0.1637369138232657],[90,0.1421268042681411],[90,0.1217751956011146],[90,0.1027373256358291],[90,0.08513001700094615],[90,0.06911297444552104],[90,0.054851021842393655],[90,0.04247163354126726],[90,0.032030680895204604],[90,0.023494646920121317],[90,0.016741608874097966],[90,0.011578010695680202],[90,0.007764979202272544],[90,0.005047096673581052],[90,0.0031777182294583915],[90,0.0019372283094932223],[90,0.0011431161969543975],[90,0.0006527140765411859],[90,0.0003605606956551291],[90,0.00019265172943883687],[90,9.954879651795305e-05],[90,4.974020669331337e-05],[90,2.4029010150644973e-05],[90,1.1222145132342273e-05],[90,5.0662664114932335e-06],[90,2.210737670341414e-06],[90,9.323780451323295e-07],[90,3.8003551313220637e-07],[90,1.4969521731508015e-07]],[[100,-3.205773148739466e-07],[100,-6.792038452458442e-07],[100,-1.4088493635071614e-06],[100,-2.8612021044771686e-06],[100,-5.689515127992279e-06],[100,-1.1078183689231955e-05],[100,-2.1122866351650937e-05],[100,-3.944145959118819e-05],[100,-7.212637922341108e-05],[100,-0.00012918190681191177],[100,-0.00022662148227145445],[100,-0.00038941938526576683],[100,-0.0006555051633245088],[100,-0.0010809389035305948],[100,-0.0017462898661872199],[100,-0.0027640403581444483],[100,-0.004286539123782906],[100,-0.006513638444354164],[100,-0.009698696647850773],[100,-0.014151176066728628],[100,-0.020233714419381457],[100,-0.028351423097108752],[100,-0.038931408042286675],[100,-0.05239123783834513],[100,-0.0690963607513571],[100,-0.08930825936642128],[100,-0.11312725819141534],[100,-0.14043605574405463],[100,-0.17085181273802336],[100,-0.20369551651344817],[100,-0.23798693274962504],[100,-0.27247148899823886],[100,-0.3056819235856232],[100,-0.3360328267228878],[100,-0.3619409746366273],[100,-0.38195952270635125],[100,-0.39491065416236387],[100,-0.4],[100,-0.3968975176171329],[100,-0.3857735013802176],[100,-0.3672844210527746],[100,-0.34251032286010213],[100,-0.3128523246331518],[100,-0.2799040665363133],[100,-0.24531391904042135],[100,-0.2106548727393105],[100,-0.17731648298125532],[100,-0.14642866750892955],[100,-0.11882154387398369],[100,-0.09501993198065846],[100,-0.0752665892253433],[100,-0.0595653355419343],[100,-0.04773421280521877],[100,-0.039459573431178556],[100,-0.03434407697964584],[100,-0.03194439666003155],[100,-0.03179737760549047],[100,-0.03343590980135712],[100,-0.03639750689152272],[100,-0.040229339908821854],[100,-0.04449327790315302],[100,-0.048773514894572496],[100,-0.05268790977248136],[100,-0.05590258465149688],[100,-0.058147962963168834],[100,-0.059233559076331155],[100,-0.05905861841417052],[100,-0.057616169475438364],[100,-0.054989063101247286],[100,-0.05133790447971103],[100,-0.046882138023287424],[100,-0.04187664290690786],[100,-0.036586828472683894],[100,-0.031265288804941484],[100,-0.026132615766924383],[100,-0.02136411828874628],[100,-0.017083156189630484],[100,-0.013360784645793634],[100,-0.010220598984291299],[100,-0.007647177411479224],[100,-0.005596369235023576],[100,-0.004005824354596129],[100,-0.0028045150553099724],[100,-0.001920454272356812],[100,-0.0012862650892278141],[100,-0.0008426307592153104],[100,-0.0005399138236463678],[100,-0.00033837003586091434],[100,-0.00020741476037680216],[100,-0.00012435628281507802],[100,-7.292494590309243e-05],[100,-4.182777953085061e-05],[100,-2.346571629610932e-05],[100,-1.287606415644031e-05],[100,-6.9105523138869575e-06],[100,-3.627627594702389e-06],[100,-1.8625714662168193e-06],[100,-9.353701467954441e-07],[100,-4.5944589445278007e-07],[100,-2.2073213098671137e-07],[100,2.2073213098671137e-07],[100,4.5944589445278007e-07],[100,9.353701467954441e-07],[100,1.8625714662168193e-06],[100,3.627627594702389e-06],[100,6.9105523138869575e-06],[100,1.287606415644031e-05],[100,2.346571629610932e-05],[100,4.182777953085061e-05],[100,7.292494590309243e-05],[100,0.00012435628281507802],[100,0.00020741476037680216],[100,0.00033837003586091434],[100,0.0005399138236463678],[100,0.0008426307592153104],[100,0.0012862650892278141],[100,0.001920454272356812],[100,0.0028045150553099724],[100,0.004005824354596129],[100,0.005596369235023576],[100,0.007647177411479224],[100,0.010220598984291299],[100,0.013360784645793634],[100,0.017083156189630484],[100,0.02136411828874628],[100,0.026132615766924383],[100,0.031265288804941484],[100,0.036586828472683894],[100,0.04187664290690786],[100,0.046882138023287424],[100,0.05133790447971103],[100,0.054989063101247286],[100,0.057616169475438364],[100,0.05905861841417052],[100,0.059233559076331155],[100,0.058147962963168834],[100,0.05590258465149688],[100,0.05268790977248136],[100,0.048773514894572496],[100,0.04449327790315302],[100,0.040229339908821854],[100,0.03639750689152272],[100,0.03343590980135712],[100,0.03179737760549047],[100,0.03194439666003155],[100,0.03434407697964584],[100,0.039459573431178556],[100,0.04773421280521877],[100,0.0595653355419343],[100,0.0752665892253433],[100,0.09501993198065846],[100,0.11882154387398369],[100,0.14642866750892955],[100,0.17731648298125532],[100,0.2106548727393105],[100,0.24531391904042135],[100,0.2799040665363133],[100,0.3128523246331518],[100,0.34251032286010213],[100,0.3672844210527746],[100,0.3857735013802176],[100,0.3968975176171329],[100,0.4],[100,0.39491065416236387],[100,0.38195952270635125],[100,0.3619409746366273],[100,0.3360328267228878],[100,0.3056819235856232],[100,0.27247148899823886],[100,0.23798693274962504],[100,0.20369551651344817],[100,0.17085181273802336],[100,0.14043605574405463],[100,0.11312725819141534],[100,0.08930825936642128],[100,0.0690963607513571],[100,0.05239123783834513],[100,0.038931408042286675],[100,0.028351423097108752],[100,0.020233714419381457],[100,0.014151176066728628],[100,0.009698696647850773],[100,0.006513638444354164],[100,0.004286539123782906],[100,0.0027640403581444483],[100,0.0017462898661872199],[100,0.0010809389035305948],[100,0.0006555051633245088],[100,0.00038941938526576683],[100,0.00022662148227145445],[100,0.00012918190681191177],[100,7.212637922341108e-05],[100,3.944145959118819e-05],[100,2.1122866351650937e-05],[100,1.1078183689231955e-05],[100,5.689515127992279e-06],[100,2.8612021044771686e-06],[100,1.4088493635071614e-06],[100,6.792038452458442e-07],[100,3.205773148739466e-07]],[[110,-7.226153618855876e-07],[110,-1.3852014629533334e-06],[110,-2.6119854090430293e-06],[110,-4.844872415289611e-06],[110,-8.839942040438428e-06],[110,-1.5866224073822604e-05],[110,-2.8012791894326906e-05],[110,-4.865184729121401e-05],[110,-8.311967049501887e-05],[110,-0.00013969187997292707],[110,-0.00023094184777527313],[110,-0.00037557736189529735],[110,-0.0006008451523492545],[110,-0.0009455687279526927],[110,-0.001463834361563325],[110,-0.0022292557557327306],[110,-0.0033396250903927876],[110,-0.004921596941918913],[110,-0.007134859914750768],[110,-0.010175047048862351],[110,-0.014274450294171685],[110,-0.01969947797787905],[110,-0.026743776431170138],[110,-0.035716077896583404],[110,-0.04692217738955137],[110,-0.06064100071404213],[110,-0.07709548991150923],[110,-0.09641994350511379],[110,-0.11862640325336699],[110,-0.14357353290253114],[110,-0.1709420203329445],[110,-0.20022068829123066],[110,-0.23070709229072806],[110,-0.26152535823564377],[110,-0.29166240346234146],[110,-0.3200216371918816],[110,-0.3454909931582652],[110,-0.36702002133524436],[110,-0.38369909168605104],[110,-0.3948328382564057],[110,-0.4],[110,-0.39909286055920745],[110,-0.3923314596129984],[110,-0.3802504011071741],[110,-0.36365906525097774],[110,-0.34357893604288714],[110,-0.32116419487389525],[110,-0.29761339360867795],[110,-0.2740807232385665],[110,-0.2515950987676518],[110,-0.2309940890422659],[110,-0.21287784314975428],[110,-0.19758587977418374],[110,-0.18519720711503648],[110,-0.17555199878957806],[110,-0.16829118144060906],[110,-0.16290893901820216],[110,-0.1588123817560822],[110,-0.15538247476024913],[110,-0.15203072812768936],[110,-0.14824703170864378],[110,-0.14363525539098457],[110,-0.1379346902591083],[110,-0.13102692496158716],[110,-0.12292918228140903],[110,-0.11377634370825183],[110,-0.10379475355397814],[110,-0.09327134958379306],[110,-0.08252169615804074],[110,-0.07186013364723041],[110,-0.06157458659387787],[110,-0.05190770815238332],[110,-0.043045109386884835],[110,-0.03511055255070416],[110,-0.02816727701926601],[110,-0.02222413849506554],[110,-0.01724499908157145],[110,-0.013159792543653952],[110,-0.00987586110461486],[110,-0.007288456087453302],[110,-0.00528964901318766],[110,-0.003775253555891091],[110,-0.0026496673037996756],[110,-0.0018287783991812118],[110,-0.001241235831926261],[110,-0.0008284575678738197],[110,-0.0005437614913682518],[110,-0.00035096875783355953],[110,-0.00022276657492668325],[110,-0.00013904422581851458],[110,-8.53448088183436e-05],[110,-5.151365686437243e-05],[110,-3.057656524758112e-05],[110,-1.784744326581471e-05],[110,-1.0244346952356885e-05],[110,-5.782471178969681e-06],[110,-3.209693667410176e-06],[110,-1.7520019706785749e-06],[110,-9.404300147883063e-07],[110,-4.964085488774642e-07],[110,4.964085488774642e-07],[110,9.404300147883063e-07],[110,1.7520019706785749e-06],[110,3.209693667410176e-06],[110,5.782471178969681e-06],[110,1.0244346952356885e-05],[110,1.784744326581471e-05],[110,3.057656524758112e-05],[110,5.151365686437243e-05],[110,8.53448088183436e-05],[110,0.00013904422581851458],[110,0.00022276657492668325],[110,0.00035096875783355953],[110,0.0005437614913682518],[110,0.0008284575678738197],[110,0.001241235831926261],[110,0.0018287783991812118],[110,0.0026496673037996756],[110,0.003775253555891091],[110,0.00528964901318766],[110,0.007288456087453302],[110,0.00987586110461486],[110,0.013159792543653952],[110,0.01724499908157145],[110,0.02222413849506554],[110,0.02816727701926601],[110,0.03511055255070416],[110,0.043045109386884835],[110,0.05190770815238332],[110,0.06157458659387787],[110,0.07186013364723041],[110,0.08252169615804074],[110,0.09327134958379306],[110,0.10379475355397814],[110,0.11377634370825183],[110,0.12292918228140903],[110,0.13102692496158716],[110,0.1379346902591083],[110,0.14363525539098457],[110,0.14824703170864378],[110,0.15203072812768936],[110,0.15538247476024913],[110,0.1588123817560822],[110,0.16290893901820216],[110,0.16829118144060906],[110,0.17555199878957806],[110,0.18519720711503648],[110,0.19758587977418374],[110,0.21287784314975428],[110,0.2309940890422659],[110,0.2515950987676518],[110,0.2740807232385665],[110,0.29761339360867795],[110,0.32116419487389525],[110,0.34357893604288714],[110,0.36365906525097774],[110,0.3802504011071741],[110,0.3923314596129984],[110,0.39909286055920745],[110,0.4],[110,0.3948328382564057],[110,0.38369909168605104],[110,0.36702002133524436],[110,0.3454909931582652],[110,0.3200216371918816],[110,0.29166240346234146],[110,0.26152535823564377],[110,0.23070709229072806],[110,0.20022068829123066],[110,0.1709420203329445],[110,0.14357353290253114],[110,0.11862640325336699],[110,0.09641994350511379],[110,0.07709548991150923],[110,0.06064100071404213],[110,0.04692217738955137],[110,0.035716077896583404],[110,0.026743776431170138],[110,0.01969947797787905],[110,0.014274450294171685],[110,0.010175047048862351],[110,0.007134859914750768],[110,0.004921596941918913],[110,0.0033396250903927876],[110,0.0022292557557327306],[110,0.001463834361563325],[110,0.0009455687279526927],[110,0.0006008451523492545],[110,0.00037557736189529735],[110,0.00023094184777527313],[110,0.00013969187997292707],[110,8.311967049501887e-05],[110,4.865184729121401e-05],[110,2.8012791894326906e-05],[110,1.5866224073822604e-05],[110,8.839942040438428e-06],[110,4.844872415289611e-06],[110,2.6119854090430293e-06],[110,1.3852014629533334e-06],[110,7.226153618855876e-07]],[[120,-7.136692777738198e-07],[120,-1.3183660496974623e-06],[120,-2.398094596626568e-06],[120,-4.295245403896576e-06],[120,-7.575322524105582e-06],[120,-1.315545526153973e-05],[120,-2.249585039201551e-05],[120,-3.787834079821687e-05],[120,-6.280175222892386e-05],[120,-0.00010252864574812414],[120,-0.0001648207155234082],[120,-0.00026089880290735835],[120,-0.00040665570626132933],[120,-0.0006241330024935917],[120,-0.0009432443309232207],[120,-0.0014036851236423889],[120,-0.0020569122496909144],[120,-0.002968008627175262],[120,-0.004217173119396284],[120,-0.005900504586521249],[120,-0.008129694523685992],[120,-0.01103022223950114],[120,-0.014737678272114038],[120,-0.019391942146036956],[120,-0.025129120226465525],[120,-0.03207140862320863],[120,-0.04031537087964694],[120,-0.04991947993861841],[120,-0.06089212155083772],[120,-0.07318153206576965],[120,-0.08666928226629995],[120,-0.1011688607537533],[120,-0.11643061339440897],[120,-0.1321537476262489],[120,-0.1480053395175442],[120,-0.16364535811622272],[120,-0.17875575624398232],[120,-0.19307080789905862],[120,-0.20640524741546168],[120,-0.2186765176330049],[120,-0.2299176577674259],[120,-0.2402780906960115],[120,-0.2500107650697591],[120,-0.259445655624826],[120,-0.26895134547942556],[120,-0.2788880835750571],[120,-0.2895570921742205],[120,-0.30115177876943655],[120,-0.3137167250210804],[120,-0.3271198067863401],[120,-0.34104156774932415],[120,-0.3549841498597818],[120,-0.3682998901394298],[120,-0.3802373998253288],[120,-0.39000084621567876],[120,-0.3968165389645939],[120,-0.4],[120,-0.39901659575834925],[120,-0.39352954545267366],[120,-0.3834305877723896],[120,-0.3688505888406726],[120,-0.3501496352147513],[120,-0.3278883780504806],[120,-0.30278429617278335],[120,-0.2756579027070158],[120,-0.24737459647222898],[120,-0.21878782286526485],[120,-0.19068852721614107],[120,-0.1637647062838079],[120,-0.13857339245569703],[120,-0.1155258588272504],[120,-0.09488541278998819],[120,-0.0767760075205332],[120,-0.06119914008648972],[120,-0.04805615127600093],[120,-0.0371730660149795],[120,-0.02832544015992791],[120,-0.021261209857004082],[120,-0.015720167694031232],[120,-0.01144931989988236],[120,-0.008213936713983563],[120,-0.00580454654971175],[120,-0.004040423505838069],[120,-0.002770279898468238],[120,-0.0018709200577848148],[120,-0.0012445672428654008],[120,-0.0008154735098520515],[120,-0.000526291743369146],[120,-0.00033455332535626853],[120,-0.00020947063961345748],[120,-0.00012918048890029517],[120,-7.846637920730052e-05],[120,-4.694401321268452e-05],[120,-2.7662010387991015e-05],[120,-1.6054294474399982e-05],[120,-9.176978801162796e-06],[120,-5.166617835169608e-06],[120,-2.864891458506993e-06],[120,-1.5645965872750545e-06],[120,-8.415620440164162e-07],[120,8.415620440164162e-07],[120,1.5645965872750545e-06],[120,2.864891458506993e-06],[120,5.166617835169608e-06],[120,9.176978801162796e-06],[120,1.6054294474399982e-05],[120,2.7662010387991015e-05],[120,4.694401321268452e-05],[120,7.846637920730052e-05],[120,0.00012918048890029517],[120,0.00020947063961345748],[120,0.00033455332535626853],[120,0.000526291743369146],[120,0.0008154735098520515],[120,0.0012445672428654008],[120,0.0018709200577848148],[120,0.002770279898468238],[120,0.004040423505838069],[120,0.00580454654971175],[120,0.008213936713983563],[120,0.01144931989988236],[120,0.015720167694031232],[120,0.021261209857004082],[120,0.02832544015992791],[120,0.0371730660149795],[120,0.04805615127600093],[120,0.06119914008648972],[120,0.0767760075205332],[120,0.09488541278998819],[120,0.1155258588272504],[120,0.13857339245569703],[120,0.1637647062838079],[120,0.19068852721614107],[120,0.21878782286526485],[120,0.24737459647222898],[120,0.2756579027070158],[120,0.30278429617278335],[120,0.3278883780504806],[120,0.3501496352147513],[120,0.3688505888406726],[120,0.3834305877723896],[120,0.39352954545267366],[120,0.39901659575834925],[120,0.4],[120,0.3968165389645939],[120,0.39000084621567876],[120,0.3802373998253288],[120,0.3682998901394298],[120,0.3549841498597818],[120,0.34104156774932415],[120,0.3271198067863401],[120,0.3137167250210804],[120,0.30115177876943655],[120,0.2895570921742205],[120,0.2788880835750571],[120,0.26895134547942556],[120,0.259445655624826],[120,0.2500107650697591],[120,0.2402780906960115],[120,0.2299176577674259],[120,0.2186765176330049],[120,0.20640524741546168],[120,0.19307080789905862],[120,0.17875575624398232],[120,0.16364535811622272],[120,0.1480053395175442],[120,0.1321537476262489],[120,0.11643061339440897],[120,0.1011688607537533],[120,0.08666928226629995],[120,0.07318153206576965],[120,0.06089212155083772],[120,0.04991947993861841],[120,0.04031537087964694],[120,0.03207140862320863],[120,0.025129120226465525],[120,0.019391942146036956],[120,0.014737678272114038],[120,0.01103022223950114],[120,0.008129694523685992],[120,0.005900504586521249],[120,0.004217173119396284],[120,0.002968008627175262],[120,0.0020569122496909144],[120,0.0014036851236423889],[120,0.0009432443309232207],[120,0.0006241330024935917],[120,0.00040665570626132933],[120,0.00026089880290735835],[120,0.0001648207155234082],[120,0.00010252864574812414],[120,6.280175222892386e-05],[120,3.787834079821687e-05],[120,2.249585039201551e-05],[120,1.315545526153973e-05],[120,7.575322524105582e-06],[120,4.295245403896576e-06],[120,2.398094596626568e-06],[120,1.3183660496974623e-06],[120,7.136692777738198e-07]]],"ys":[{"__ndarray__":"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","dtype":"float64","shape":[200]},{"__ndarray__":"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","dtype":"float64","shape":[200]},{"__ndarray__":"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","dtype":"float64","shape":[200]},{"__ndarray__":"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","dtype":"float64","shape":[200]},{"__ndarray__":"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","dtype":"float64","shape":[200]},{"__ndarray__":"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","dtype":"float64","shape":[200]},{"__ndarray__":"BId0V3Vc+8CSUFhL06j5wCAaPD8x9ffAr+MfM49B9sA9rQMn7Y30wMt25xpL2vLAWkDLDqkm8cDQE14FDubuwOymJe3JfuvACDrt1IUX6MAkzbS8QbDkwEJgfKT9SOHAvOaHGHPD28D0DBfo6vTUwGBmTG/FTMzAoGXVHGpfvcAA9I/YSiqBwKBosWbXFLlA4Gc6FHwnykC4DY46RuLTQIDn/mrOsNpAoOC3Tau/4ECETfBl7ybkQGi6KH4zjudATCdhlnf16kAwlJmuu1zuQIoAaeP/4fBA/DaF76GV8kBsbaH7Q0n0QN6jvQfm/PVAUNrZE4iw90DCEPYfKmT5QDRHEizMF/tApn0uOG7L/EAYtEpEEH/+QEV1MyhZGQBBfpBBLirzAEG2q080+8wBQfDGXTrMpgJBKOJrQJ2AA0Fi/XlGbloEQZoYiEw/NAVB0jOWUhAOBkEMT6RY4ecGQURqsl6ywQdBfoXAZIObCEG2oM5qVHUJQfC73HAlTwpBKNfqdvYoC0Fg8vh8xwIMQZoNB4OY3AxB0igViWm2DUEMRCOPOpAOQURfMZULag9BP72fTe4hEEHbyqbQ1o4QQXfYrVO/+xBBFOa01qdoEUGw87tZkNURQU0Bw9x4QhJB6Q7KX2GvEkGGHNHiSRwTQSIq2GUyiRNBvzff6Br2E0FbReZrA2MUQfdS7e7rzxRBlGD0cdQ8FUEwbvv0vKkVQc17AnilFhZBaYkJ+42DFkEGlxB+dvAWQaKkFwFfXRdBP7IehEfKF0HbvyUHMDcYQXfNLIoYpBhBFNszDQERGUGx6DqQ6X0ZQU32QRPS6hlB6QNJlrpXGkGFEVAZo8QaQSMfV5yLMRtBvyxeH3SeG0FbOmWiXAscQfdHbCVFeBxBk1VzqC3lHEExY3orFlIdQc1wga7+vh1BaX6IMecrHkEFjI+0z5geQaGZlje4BR9BP6eduqByH0HbtKQ9id8fQTzhVeA4JiBBCmjZIa1cIEHY7lxjIZMgQaZ14KSVySBBdPxj5gkAIUFCg+cnfjYhQRAKa2nybCFB4JDuqmajIUHgkO6qZqMhQRAKa2nybCFBQoPnJ342IUF0/GPmCQAhQaZ14KSVySBB2O5cYyGTIEEKaNkhrVwgQTzhVeA4JiBB27SkPYnfH0E/p526oHIfQaGZlje4BR9BBYyPtM+YHkFpfogx5yseQc1wga7+vh1BMWN6KxZSHUGTVXOoLeUcQfdHbCVFeBxBWzplolwLHEG/LF4fdJ4bQSMfV5yLMRtBhRFQGaPEGkHpA0mWulcaQU32QRPS6hlBseg6kOl9GUEU2zMNAREZQXfNLIoYpBhB278lBzA3GEE/sh6ER8oXQaKkFwFfXRdBBpcQfnbwFkFpiQn7jYMWQc17AnilFhZBMG779LypFUGUYPRx1DwVQfdS7e7rzxRBW0XmawNjFEG/N9/oGvYTQSIq2GUyiRNBhhzR4kkcE0HpDspfYa8SQU0Bw9x4QhJBsPO7WZDVEUEU5rTWp2gRQXfYrVO/+xBB28qm0NaOEEE/vZ9N7iEQQURfMZULag9BDEQjjzqQDkHSKBWJabYNQZoNB4OY3AxBYPL4fMcCDEEo1+p29igLQfC73HAlTwpBtqDOalR1CUF+hcBkg5sIQURqsl6ywQdBDE+kWOHnBkHSM5ZSEA4GQZoYiEw/NAVBYv15Rm5aBEEo4mtAnYADQfDGXTrMpgJBtqtPNPvMAUF+kEEuKvMAQUV1MyhZGQBBGLRKRBB//kCmfS44bsv8QDRHEizMF/tAwhD2Hypk+UBQ2tkTiLD3QN6jvQfm/PVAbG2h+0NJ9ED8NoXvoZXyQIoAaeP/4fBAMJSZrrtc7kBMJ2GWd/XqQGi6KH4zjudAhE3wZe8m5ECg4LdNq7/gQIDn/mrOsNpAuA2OOkbi00DgZzoUfCfKQKBosWbXFLlAAPSP2EoqgcCgZdUcal+9wGBmTG/FTMzA9AwX6Or01MC85ocYc8PbwEJgfKT9SOHAJM20vEGw5MAIOu3UhRfowOymJe3JfuvA0BNeBQ7m7sBaQMsOqSbxwMt25xpL2vLAPa0DJ+2N9MCv4x8zj0H2wCAaPD8x9ffAklBYS9Oo+cAEh3RXdVz7wA==","dtype":"float64","shape":[200]},{"__ndarray__":"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","dtype":"float64","shape":[200]},{"__ndarray__":"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","dtype":"float64","shape":[200]},{"__ndarray__":"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","dtype":"float64","shape":[200]},{"__ndarray__":"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","dtype":"float64","shape":[200]},{"__ndarray__":"Nib207tFEsEyLfExKKQRwS807I+UAhHBKzvn7QBhEMFOhMSX2n4PwUeSulOzOw7BQKCwD4z4DME4rqbLZLULwTG8nIc9cgrBKsqSQxYvCcEi2Ij/7usHwRvmfrvHqAbBFPR0d6BlBcEMAmszeSIEwQUQYe9R3wLB/R1XqyqcAcH2K01nA1kAwd5zhka4K/7Azo9yvmml+8DAq142Gx/5wLDHSq7MmPbAouM2Jn4S9MCU/yKeL4zxwAg3HizCC+7A7G72GyX/6MDQps4LiPLjwGC9TffVy93AIC3+1puy08DgOV1twzLDwADUPGga9n9AIAfhEyUyxUDAE0CqTLLUQACkj8qGy95AIJpvdWBy5EA4YpeF/X7pQFgqv5Wai+5APHnz0hvM8UBIXQdbalL0QFhBG+O42PZAaCUvawdf+UB4CUPzVeX7QITtVnuka/5Aymi1gfl4AEHSWr/FILwBQdhMyQlI/wJB4D7TTW9CBEHoMN2RloUFQe4i59W9yAZB9hTxGeULCEH+BvtdDE8JQQT5BKIzkgpBDOsO5lrVC0EU3RgqghgNQRzPIm6pWw5BJMEsstCeD0GUWRv7+3AQQZhSIJ2PEhFBnEslPyO0EUGgRCrhtlUSQaQ9L4NK9xJBqDY0Jd6YE0GqLznHcToUQa4oPmkF3BRBsiFDC5l9FUG2GkitLB8WQboTTU/AwBZBvgxS8VNiF0HCBVeT5wMYQcT+WzV7pRhByPdg1w5HGUHM8GV5ougZQdDpahs2ihpB1OJvvckrG0HY23RfXc0bQdrUeQHxbhxB3s1+o4QQHUHixoNFGLIdQea/iOerUx5B6riNiT/1HkHusZIr05YfQXnVy2YzHCBB+lHON/1sIEF8ztAIx70gQf5K09mQDiFBgMfVqlpfIUECRNh7JLAhQYTA2kzuACJBBT3dHbhRIkGHud/ugaIiQQk24r9L8yJBi7LkkBVEI0ENL+dh35QjQY+r6TKp5SNBECjsA3M2JEGSpO7UPIckQRQh8aUG2CRBlp3zdtAoJUEYGvZHmnklQZqW+BhkyiVBGxP76S0bJkEbE/vpLRsmQZqW+BhkyiVBGBr2R5p5JUGWnfN20CglQRQh8aUG2CRBkqTu1DyHJEEQKOwDczYkQY+r6TKp5SNBDS/nYd+UI0GLsuSQFUQjQQk24r9L8yJBh7nf7oGiIkEFPd0duFEiQYTA2kzuACJBAkTYeySwIUGAx9WqWl8hQf5K09mQDiFBfM7QCMe9IEH6Uc43/WwgQXnVy2YzHCBB7rGSK9OWH0HquI2JP/UeQea/iOerUx5B4saDRRiyHUHezX6jhBAdQdrUeQHxbhxB2Nt0X13NG0HU4m+9ySsbQdDpahs2ihpBzPBleaLoGUHI92DXDkcZQcT+WzV7pRhBwgVXk+cDGEG+DFLxU2IXQboTTU/AwBZBthpIrSwfFkGyIUMLmX0VQa4oPmkF3BRBqi85x3E6FEGoNjQl3pgTQaQ9L4NK9xJBoEQq4bZVEkGcSyU/I7QRQZhSIJ2PEhFBlFkb+/twEEEkwSyy0J4PQRzPIm6pWw5BFN0YKoIYDUEM6w7mWtULQQT5BKIzkgpB/gb7XQxPCUH2FPEZ5QsIQe4i59W9yAZB6DDdkZaFBUHgPtNNb0IEQdhMyQlI/wJB0lq/xSC8AUHKaLWB+XgAQYTtVnuka/5AeAlD81Xl+0BoJS9rB1/5QFhBG+O42PZASF0HW2pS9EA8efPSG8zxQFgqv5Wai+5AOGKXhf1+6UAgmm91YHLkQACkj8qGy95AwBNAqkyy1EAgB+ETJTLFQADUPGga9n9A4DldbcMyw8AgLf7Wm7LTwGC9TffVy93A0KbOC4jy48DsbvYbJf/owAg3HizCC+7AlP8ini+M8cCi4zYmfhL0wLDHSq7MmPbAwKteNhsf+cDOj3K+aaX7wN5zhka4K/7A9itNZwNZAMH9HVerKpwBwQUQYe9R3wLBDAJrM3kiBMEU9HR3oGUFwRvmfrvHqAbBItiI/+7rB8EqypJDFi8JwTG8nIc9cgrBOK6my2S1C8FAoLAPjPgMwUeSulOzOw7BToTEl9p+D8ErO+ftAGEQwS807I+UAhHBMi3xMSikEcE2JvbTu0USwQ==","dtype":"float64","shape":[200]},{"__ndarray__":"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","dtype":"float64","shape":[200]}]},"selected":{"id":"42957","type":"Selection"},"selection_policy":{"id":"42956","type":"UnionRenderers"}},"id":"42923","type":"ColumnDataSource"},{"attributes":{},"id":"42963","type":"Selection"},{"attributes":{"data_source":{"id":"42923","type":"ColumnDataSource"},"glyph":{"id":"42925","type":"Patches"},"hover_glyph":null,"muted_glyph":null,"nonselection_glyph":{"id":"42926","type":"Patches"},"selection_glyph":null,"view":{"id":"42928","type":"CDSView"}},"id":"42927","type":"GlyphRenderer"},{"attributes":{"callback":null,"factors":["0","10","20","30","40","50","60","70","80","90","100","110","120"],"tags":[[["Remodel Gap","Remodel Gap",null]]]},"id":"42892","type":"FactorRange"},{"attributes":{"bottom":{"field":"bottom"},"fill_alpha":{"value":0.1},"fill_color":{"value":"black"},"line_alpha":{"value":0.1},"line_color":{"value":"black"},"top":{"field":"top"},"width":{"value":0.1},"x":{"field":"x"}},"id":"42938","type":"VBar"},{"attributes":{},"id":"42913","type":"PanTool"},{"attributes":{"fill_alpha":{"value":0.1},"fill_color":{"value":"white"},"line_alpha":{"value":0.1},"line_color":{"value":"white"},"x":{"field":"x"},"y":{"field":"y"}},"id":"42944","type":"Scatter"},{"attributes":{"callback":null,"data":{"x":[[0,0],[10,0],[20,0],[30,0],[40,0],[50,0],[60,0],[70,0],[80,0],[90,0],[100,0],[110,0],[120,0]],"y":{"__ndarray__":"AAAAAADgBUEAAAAAcBUBQQAAAABg7gBBAAAAAFBKAEEAAAAAlCgBQQAAAAAAFwFBAAAAAAAXAUEAAAAAgIT+QAAAAACA+/9AAAAAAABA/0AAAAAAIFkDQQAAAACAB/5AAAAAAOw7EEE=","dtype":"float64","shape":[13]}},"selected":{"id":"42963","type":"Selection"},"selection_policy":{"id":"42962","type":"UnionRenderers"}},"id":"42941","type":"ColumnDataSource"},{"attributes":{},"id":"42912","type":"SaveTool"},{"attributes":{"fill_alpha":{"value":0.5},"fill_color":{"value":"#1f77b3"},"xs":{"field":"xs"},"ys":{"field":"ys"}},"id":"42925","type":"Patches"},{"attributes":{"axis_label":"SalePrice","bounds":"auto","formatter":{"id":"42949","type":"BasicTickFormatter"},"major_label_orientation":"horizontal","ticker":{"id":"42908","type":"BasicTicker"}},"id":"42907","type":"LinearAxis"},{"attributes":{"text":"Years Until Remodel","text_color":{"value":"black"},"text_font_size":{"value":"12pt"}},"id":"42895","type":"Title"},{"attributes":{"line_alpha":{"value":0.1},"line_color":{"value":"black"},"x0":{"field":"x"},"x1":{"field":"x"},"y0":{"field":"y0"},"y1":{"field":"y1"}},"id":"42932","type":"Segment"},{"attributes":{},"id":"42908","type":"BasicTicker"},{"attributes":{"fill_alpha":{"value":0.5},"fill_color":{"value":"#1f77b3"},"line_alpha":{"value":0.1},"line_color":{"value":"black"},"xs":{"field":"xs"},"ys":{"field":"ys"}},"id":"42926","type":"Patches"},{"attributes":{"source":{"id":"42941","type":"ColumnDataSource"}},"id":"42946","type":"CDSView"},{"attributes":{},"id":"42962","type":"UnionRenderers"},{"attributes":{"data_source":{"id":"42935","type":"ColumnDataSource"},"glyph":{"id":"42937","type":"VBar"},"hover_glyph":null,"muted_glyph":null,"nonselection_glyph":{"id":"42938","type":"VBar"},"selection_glyph":null,"view":{"id":"42940","type":"CDSView"}},"id":"42939","type":"GlyphRenderer"},{"attributes":{},"id":"42961","type":"Selection"},{"attributes":{"bottom_units":"screen","fill_alpha":{"value":0.5},"fill_color":{"value":"lightgrey"},"left_units":"screen","level":"overlay","line_alpha":{"value":1.0},"line_color":{"value":"black"},"line_dash":[4,4],"line_width":{"value":2},"render_mode":"css","right_units":"screen","top_units":"screen"},"id":"42964","type":"BoxAnnotation"},{"attributes":{"data_source":{"id":"42929","type":"ColumnDataSource"},"glyph":{"id":"42931","type":"Segment"},"hover_glyph":null,"muted_glyph":null,"nonselection_glyph":{"id":"42932","type":"Segment"},"selection_glyph":null,"view":{"id":"42934","type":"CDSView"}},"id":"42933","type":"GlyphRenderer"},{"attributes":{"dimension":1,"grid_line_color":null,"ticker":{"id":"42908","type":"BasicTicker"}},"id":"42911","type":"Grid"},{"attributes":{"source":{"id":"42923","type":"ColumnDataSource"}},"id":"42928","type":"CDSView"},{"attributes":{},"id":"42960","type":"UnionRenderers"},{"attributes":{"source":{"id":"42929","type":"ColumnDataSource"}},"id":"42934","type":"CDSView"},{"attributes":{"grid_line_color":null,"ticker":{"id":"42904","type":"CategoricalTicker"}},"id":"42906","type":"Grid"}],"root_ids":["42894"]},"title":"Bokeh Application","version":"1.4.0"}};
+  var render_items = [{"docid":"bd6f0fb4-fc9d-4146-b6ac-42fdce079c2e","roots":{"42894":"2c2522f1-bc79-4bcf-993c-3e5c90e063b6"}}];
+  root.Bokeh.embed.embed_items_notebook(docs_json, render_items);
+
+  }
+  if (root.Bokeh !== undefined) {
+    embed_document(root);
+  } else {
+    var attempts = 0;
+    var timer = setInterval(function(root) {
+      if (root.Bokeh !== undefined) {
+        clearInterval(timer);
+        embed_document(root);
+      } else {
+        attempts++;
+        if (attempts > 100) {
+          clearInterval(timer);
+          console.log("Bokeh: ERROR: Unable to run BokehJS code because BokehJS library is missing");
+        }
+      }
+    }, 10, root)
+  }
+})(window);
+</script>
+</div>

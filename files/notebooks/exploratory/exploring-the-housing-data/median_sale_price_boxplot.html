@@ -1,0 +1,833 @@
+
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-1.4.0.min.js" type="text/javascript"></script>
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-widgets-1.4.0.min.js" type="text/javascript"></script>
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-tables-1.4.0.min.js" type="text/javascript"></script>
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-gl-1.4.0.min.js" type="text/javascript"></script>
+<script src="https://code.jquery.com/jquery-2.1.4.min.js" type="text/javascript"></script>
+<script src="https://code.jquery.com/ui/1.10.4/jquery-ui.min.js" type="text/javascript"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.1.20/require.min.js" type="text/javascript"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/underscore.js/1.8.3/underscore-min.js" type="text/javascript"></script>
+<script type="text/javascript">function HoloViewsWidget() {
+}
+
+HoloViewsWidget.prototype.init_slider = function(init_val){
+  if(this.load_json) {
+    this.from_json()
+  } else {
+    this.update_cache();
+  }
+}
+
+HoloViewsWidget.prototype.populate_cache = function(idx){
+  this.cache[idx].innerHTML = this.frames[idx];
+  if (this.embed) {
+    delete this.frames[idx];
+  }
+}
+
+HoloViewsWidget.prototype.process_error = function(msg){
+}
+
+HoloViewsWidget.prototype.from_json = function() {
+  var data_url = this.json_path + this.id + '.json';
+  $.getJSON(data_url, $.proxy(function(json_data) {
+    this.frames = json_data;
+    this.update_cache();
+    this.update(0);
+  }, this));
+}
+
+HoloViewsWidget.prototype.dynamic_update = function(current){
+  if (current === undefined) {
+    return
+  }
+  this.current = current;
+  if (this.comm) {
+    var msg = {comm_id: this.id+'_client', content: current}
+    this.comm.send(msg);
+  }
+}
+
+HoloViewsWidget.prototype.update_cache = function(force){
+  var frame_len = Object.keys(this.frames).length;
+  for (var i=0; i<frame_len; i++) {
+    if(!this.load_json || this.dynamic)  {
+      var frame = Object.keys(this.frames)[i];
+    } else {
+      var frame = i;
+    }
+    if(!(frame in this.cache) || force) {
+      if ((frame in this.cache) && force) { this.cache[frame].remove() }
+      var div = document.createElement("div");
+      var parent = document.getElementById("_anim_img"+this.id);
+      div.style.display = "none";
+      parent.appendChild(div)
+      this.cache[frame] = div;
+      var cache_id = "_anim_img"+this.id+"_"+frame;
+      this.populate_cache(frame);
+    }
+  }
+}
+
+HoloViewsWidget.prototype.update = function(current){
+  if(current in this.cache) {
+    for (var index in this.cache) {
+      this.cache[index].style.display = "none";
+    }
+    this.cache[current].style.display = "";
+    this.wait = false;
+  }
+}
+
+HoloViewsWidget.prototype.init_comms = function() {
+  var that = this
+  HoloViews.comm_manager.register_target(this.plot_id, this.id, function (msg) { that.msg_handler(msg) })
+  if (!this.cached || this.dynamic) {
+    function ack_callback(msg) {
+      var msg = msg.metadata;
+      var comm_id = msg.comm_id;
+      var comm_status = HoloViews.comm_status[comm_id];
+      if (that.queue.length > 0) {
+        that.time = Date.now();
+        that.dynamic_update(that.queue[that.queue.length-1]);
+        that.queue = [];
+      } else {
+        that.wait = false;
+      }
+      if ((msg.msg_type == "Ready") && msg.content) {
+        console.log("Python callback returned following output:", msg.content);
+      } else if (msg.msg_type == "Error") {
+        console.log("Python failed with the following traceback:", msg.traceback)
+      }
+    }
+    var comm = HoloViews.comm_manager.get_client_comm(this.plot_id, this.id+'_client', ack_callback);
+    return comm
+  }
+}
+
+HoloViewsWidget.prototype.msg_handler = function(msg) {
+  var metadata = msg.metadata;
+  if ((metadata.msg_type == "Ready")) {
+    if (metadata.content) {
+      console.log("Python callback returned following output:", metadata.content);
+    }
+	return;
+  } else if (metadata.msg_type == "Error") {
+    console.log("Python failed with the following traceback:", metadata.traceback)
+    return
+  }
+  this.process_msg(msg)
+}
+
+HoloViewsWidget.prototype.process_msg = function(msg) {
+}
+
+function SelectionWidget(frames, id, slider_ids, keyMap, dim_vals, notFound, load_json, mode, cached, json_path, dynamic, plot_id){
+  this.frames = frames;
+  this.id = id;
+  this.plot_id = plot_id;
+  this.slider_ids = slider_ids;
+  this.keyMap = keyMap
+  this.current_frame = 0;
+  this.current_vals = dim_vals;
+  this.load_json = load_json;
+  this.mode = mode;
+  this.notFound = notFound;
+  this.cached = cached;
+  this.dynamic = dynamic;
+  this.cache = {};
+  this.json_path = json_path;
+  this.init_slider(this.current_vals[0]);
+  this.queue = [];
+  this.wait = false;
+  if (!this.cached || this.dynamic) {
+    this.comm = this.init_comms();
+  }
+}
+
+SelectionWidget.prototype = new HoloViewsWidget;
+
+
+SelectionWidget.prototype.get_key = function(current_vals) {
+  var key = "(";
+  for (var i=0; i<this.slider_ids.length; i++)
+  {
+    var val = this.current_vals[i];
+    if (!(typeof val === 'string')) {
+      if (val % 1 === 0) { val = val.toFixed(1); }
+      else { val = val.toFixed(10); val = val.slice(0, val.length-1);}
+    }
+    key += "'" + val + "'";
+    if(i != this.slider_ids.length-1) { key += ', ';}
+    else if(this.slider_ids.length == 1) { key += ',';}
+  }
+  key += ")";
+  return this.keyMap[key];
+}
+
+SelectionWidget.prototype.set_frame = function(dim_val, dim_idx){
+  this.current_vals[dim_idx] = dim_val;
+  var key = this.current_vals;
+  if (!this.dynamic) {
+    key = this.get_key(key)
+  }
+  if (this.dynamic || !this.cached) {
+    if ((this.time !== undefined) && ((this.wait) && ((this.time + 10000) > Date.now()))) {
+      this.queue.push(key);
+      return
+    }
+    this.queue = [];
+    this.time = Date.now();
+    this.current_frame = key;
+    this.wait = true;
+    this.dynamic_update(key)
+  } else if (key !== undefined) {
+    this.update(key)
+  }
+}
+
+
+/* Define the ScrubberWidget class */
+function ScrubberWidget(frames, num_frames, id, interval, load_json, mode, cached, json_path, dynamic, plot_id){
+  this.slider_id = "_anim_slider" + id;
+  this.loop_select_id = "_anim_loop_select" + id;
+  this.id = id;
+  this.plot_id = plot_id;
+  this.interval = interval;
+  this.current_frame = 0;
+  this.direction = 0;
+  this.dynamic = dynamic;
+  this.timer = null;
+  this.load_json = load_json;
+  this.mode = mode;
+  this.cached = cached;
+  this.frames = frames;
+  this.cache = {};
+  this.length = num_frames;
+  this.json_path = json_path;
+  document.getElementById(this.slider_id).max = this.length - 1;
+  this.init_slider(0);
+  this.wait = false;
+  this.queue = [];
+  if (!this.cached || this.dynamic) {
+    this.comm = this.init_comms()
+  }
+}
+
+ScrubberWidget.prototype = new HoloViewsWidget;
+
+ScrubberWidget.prototype.set_frame = function(frame){
+  this.current_frame = frame;
+  var widget = document.getElementById(this.slider_id);
+  if (widget === null) {
+    this.pause_animation();
+    return
+  }
+  widget.value = this.current_frame;
+  if (this.dynamic || !this.cached) {
+    if ((this.time !== undefined) && ((this.wait) && ((this.time + 10000) > Date.now()))) {
+      this.queue.push(frame);
+      return
+    }
+    this.queue = [];
+    this.time = Date.now();
+    this.wait = true;
+    this.dynamic_update(frame)
+  } else {
+    this.update(frame)
+  }
+}
+
+ScrubberWidget.prototype.get_loop_state = function(){
+  var button_group = document[this.loop_select_id].state;
+  for (var i = 0; i < button_group.length; i++) {
+    var button = button_group[i];
+    if (button.checked) {
+      return button.value;
+    }
+  }
+  return undefined;
+}
+
+
+ScrubberWidget.prototype.next_frame = function() {
+  this.set_frame(Math.min(this.length - 1, this.current_frame + 1));
+}
+
+ScrubberWidget.prototype.previous_frame = function() {
+  this.set_frame(Math.max(0, this.current_frame - 1));
+}
+
+ScrubberWidget.prototype.first_frame = function() {
+  this.set_frame(0);
+}
+
+ScrubberWidget.prototype.last_frame = function() {
+  this.set_frame(this.length - 1);
+}
+
+ScrubberWidget.prototype.slower = function() {
+  this.interval /= 0.7;
+  if(this.direction > 0){this.play_animation();}
+  else if(this.direction < 0){this.reverse_animation();}
+}
+
+ScrubberWidget.prototype.faster = function() {
+  this.interval *= 0.7;
+  if(this.direction > 0){this.play_animation();}
+  else if(this.direction < 0){this.reverse_animation();}
+}
+
+ScrubberWidget.prototype.anim_step_forward = function() {
+  if(this.current_frame < this.length - 1){
+    this.next_frame();
+  }else{
+    var loop_state = this.get_loop_state();
+    if(loop_state == "loop"){
+      this.first_frame();
+    }else if(loop_state == "reflect"){
+      this.last_frame();
+      this.reverse_animation();
+    }else{
+      this.pause_animation();
+      this.last_frame();
+    }
+  }
+}
+
+ScrubberWidget.prototype.anim_step_reverse = function() {
+  if(this.current_frame > 0){
+    this.previous_frame();
+  } else {
+    var loop_state = this.get_loop_state();
+    if(loop_state == "loop"){
+      this.last_frame();
+    }else if(loop_state == "reflect"){
+      this.first_frame();
+      this.play_animation();
+    }else{
+      this.pause_animation();
+      this.first_frame();
+    }
+  }
+}
+
+ScrubberWidget.prototype.pause_animation = function() {
+  this.direction = 0;
+  if (this.timer){
+    clearInterval(this.timer);
+    this.timer = null;
+  }
+}
+
+ScrubberWidget.prototype.play_animation = function() {
+  this.pause_animation();
+  this.direction = 1;
+  var t = this;
+  if (!this.timer) this.timer = setInterval(function(){t.anim_step_forward();}, this.interval);
+}
+
+ScrubberWidget.prototype.reverse_animation = function() {
+  this.pause_animation();
+  this.direction = -1;
+  var t = this;
+  if (!this.timer) this.timer = setInterval(function(){t.anim_step_reverse();}, this.interval);
+}
+
+function extend(destination, source) {
+  for (var k in source) {
+    if (source.hasOwnProperty(k)) {
+      destination[k] = source[k];
+    }
+  }
+  return destination;
+}
+
+function update_widget(widget, values) {
+  if (widget.hasClass("ui-slider")) {
+    widget.slider('option', {
+      min: 0,
+      max: values.length-1,
+      dim_vals: values,
+      value: 0,
+      dim_labels: values
+    })
+    widget.slider('option', 'slide').call(widget, event, {value: 0})
+  } else {
+    widget.empty();
+    for (var i=0; i<values.length; i++){
+      widget.append($("<option>", {
+        value: i,
+        text: values[i]
+      }))
+    };
+    widget.data('values', values);
+    widget.data('value', 0);
+    widget.trigger("change");
+  };
+}
+
+function init_slider(id, plot_id, dim, values, next_vals, labels, dynamic, step, value, next_dim,
+                     dim_idx, delay, jQueryUI_CDN, UNDERSCORE_CDN) {
+  // Slider JS Block START
+  function loadcssfile(filename){
+    var fileref=document.createElement("link")
+    fileref.setAttribute("rel", "stylesheet")
+    fileref.setAttribute("type", "text/css")
+    fileref.setAttribute("href", filename)
+    document.getElementsByTagName("head")[0].appendChild(fileref)
+  }
+  loadcssfile("https://code.jquery.com/ui/1.10.4/themes/smoothness/jquery-ui.css");
+  /* Check if jQuery and jQueryUI have been loaded
+     otherwise load with require.js */
+  var jQuery = window.jQuery,
+    // check for old versions of jQuery
+    oldjQuery = jQuery && !!jQuery.fn.jquery.match(/^1\.[0-4](\.|$)/),
+    jquery_path = '',
+    paths = {},
+    noConflict;
+  var jQueryUI = jQuery.ui;
+  // check for jQuery
+  if (!jQuery || oldjQuery) {
+    // load if it's not available or doesn't meet min standards
+    paths.jQuery = jQuery;
+    noConflict = !!oldjQuery;
+  } else {
+    // register the current jQuery
+    define('jquery', [], function() { return jQuery; });
+  }
+  if (!jQueryUI) {
+    paths.jQueryUI = jQueryUI_CDN.slice(null, -3);
+  } else {
+    define('jQueryUI', [], function() { return jQuery.ui; });
+  }
+  paths.underscore = UNDERSCORE_CDN.slice(null, -3);
+  var jquery_require = {
+    paths: paths,
+    shim: {
+      "jQueryUI": {
+        exports:"$",
+        deps: ['jquery']
+      },
+      "underscore": {
+        exports: '_'
+      }
+    }
+  }
+  require.config(jquery_require);
+  require(["jQueryUI", "underscore"], function(jUI, _){
+    if (noConflict) $.noConflict(true);
+    var vals = values;
+    if (dynamic && vals.constructor === Array) {
+      var default_value = parseFloat(value);
+      var min = parseFloat(vals[0]);
+      var max = parseFloat(vals[vals.length-1]);
+      var wstep = step;
+      var wlabels = [default_value];
+      var init_label = default_value;
+    } else {
+      var min = 0;
+      if (dynamic) {
+        var max = Object.keys(vals).length - 1;
+        var init_label = labels[value];
+        var default_value = values[value];
+      } else {
+        var max = vals.length - 1;
+        var init_label = labels[value];
+        var default_value = value;
+      }
+      var wstep = 1;
+      var wlabels = labels;
+    }
+    function adjustFontSize(text) {
+      var width_ratio = (text.parent().width()/8)/text.val().length;
+      var size = Math.min(0.9, Math.max(0.6, width_ratio))+'em';
+      text.css('font-size', size);
+    }
+    var slider = $('#_anim_widget'+id+'_'+dim);
+    slider.slider({
+      animate: "fast",
+      min: min,
+      max: max,
+      step: wstep,
+      value: default_value,
+      dim_vals: vals,
+      dim_labels: wlabels,
+      next_vals: next_vals,
+      slide: function(event, ui) {
+        var vals = slider.slider("option", "dim_vals");
+        var next_vals = slider.slider("option", "next_vals");
+        var dlabels = slider.slider("option", "dim_labels");
+        if (dynamic) {
+          var dim_val = ui.value;
+          if (vals.constructor === Array) {
+            var label = ui.value;
+          } else {
+            var label = dlabels[ui.value];
+          }
+        } else {
+          var dim_val = vals[ui.value];
+          var label = dlabels[ui.value];
+        }
+        var text = $('#textInput'+id+'_'+dim);
+        text.val(label);
+        adjustFontSize(text);
+        HoloViews.index[plot_id].set_frame(dim_val, dim_idx);
+        if (Object.keys(next_vals).length > 0) {
+          var new_vals = next_vals[dim_val];
+          var next_widget = $('#_anim_widget'+id+'_'+next_dim);
+          update_widget(next_widget, new_vals);
+        }
+      }
+    });
+    slider.keypress(function(event) {
+      if (event.which == 80 || event.which == 112) {
+        var start = slider.slider("option", "value");
+        var stop =  slider.slider("option", "max");
+        for (var i=start; i<=stop; i++) {
+          var delay = i*delay;
+          $.proxy(function doSetTimeout(i) { setTimeout($.proxy(function() {
+            var val = {value:i};
+            slider.slider('value',i);
+            slider.slider("option", "slide")(null, val);
+          }, slider), delay);}, slider)(i);
+        }
+      }
+      if (event.which == 82 || event.which == 114) {
+        var start = slider.slider("option", "value");
+        var stop =  slider.slider("option", "min");
+        var count = 0;
+        for (var i=start; i>=stop; i--) {
+          var delay = count*delay;
+          count = count + 1;
+          $.proxy(function doSetTimeout(i) { setTimeout($.proxy(function() {
+            var val = {value:i};
+            slider.slider('value',i);
+            slider.slider("option", "slide")(null, val);
+          }, slider), delay);}, slider)(i);
+        }
+      }
+    });
+    var textInput = $('#textInput'+id+'_'+dim)
+    textInput.val(init_label);
+    adjustFontSize(textInput);
+  });
+}
+
+function init_dropdown(id, plot_id, dim, vals, value, next_vals, labels, next_dim, dim_idx, dynamic) {
+  var widget = $("#_anim_widget"+id+'_'+dim);
+  widget.data('values', vals)
+  for (var i=0; i<vals.length; i++){
+    if (dynamic) {
+      var val = vals[i];
+    } else {
+      var val = i;
+    }
+    widget.append($("<option>", {
+      value: val,
+      text: labels[i]
+    }));
+  };
+  widget.data("next_vals", next_vals);
+  widget.val(value);
+  widget.on('change', function(event, ui) {
+    if (dynamic) {
+      var dim_val = parseInt(this.value);
+    } else {
+      var dim_val = $.data(this, 'values')[this.value];
+    }
+    var next_vals = $.data(this, "next_vals");
+    if (Object.keys(next_vals).length > 0) {
+      var new_vals = next_vals[dim_val];
+      var next_widget = $('#_anim_widget'+id+'_'+next_dim);
+      update_widget(next_widget, new_vals);
+    }
+    var widgets = HoloViews.index[plot_id]
+    if (widgets) {
+      widgets.set_frame(dim_val, dim_idx);
+    }
+  });
+}
+
+
+if (window.HoloViews === undefined) {
+  window.HoloViews = {}
+  window.PyViz = window.HoloViews
+} else if (window.PyViz === undefined) {
+  window.PyViz = window.HoloViews
+}
+
+
+var _namespace = {
+  init_slider: init_slider,
+  init_dropdown: init_dropdown,
+  comms: {},
+  comm_status: {},
+  index: {},
+  plot_index: {},
+  kernels: {},
+  receivers: {}
+}
+
+for (var k in _namespace) {
+  if (!(k in window.HoloViews)) {
+    window.HoloViews[k] = _namespace[k];
+  }
+}
+
+// Define Bokeh specific subclasses
+function BokehSelectionWidget() {
+  SelectionWidget.apply(this, arguments);
+}
+
+function BokehScrubberWidget() {
+  ScrubberWidget.apply(this, arguments);
+}
+
+// Let them inherit from the baseclasses
+BokehSelectionWidget.prototype = Object.create(SelectionWidget.prototype);
+BokehScrubberWidget.prototype = Object.create(ScrubberWidget.prototype);
+
+// Define methods to override on widgets
+var BokehMethods = {
+  update_cache : function(){
+    for (var index in this.frames) {
+      this.frames[index] = JSON.parse(this.frames[index]);
+    }
+  },
+  update : function(current){
+    if (current === undefined) {
+      return;
+    }
+    var data = this.frames[current];
+    if (data !== undefined) {
+      if (data.root in HoloViews.plot_index) {
+        var doc = HoloViews.plot_index[data.root].model.document;
+      } else {
+        var doc = Bokeh.index[data.root].model.document;
+      }
+      doc.apply_json_patch(data.content);
+    }
+  },
+  init_comms: function() {
+    if (Bokeh.protocol !== undefined) {
+      this.receiver = new Bokeh.protocol.Receiver()
+    } else {
+      this.receiver = null;
+    }
+    return HoloViewsWidget.prototype.init_comms.call(this);
+  },
+  process_msg : function(msg) {
+    if (this.plot_id in HoloViews.plot_index) {
+      var doc = HoloViews.plot_index[this.plot_id].model.document;
+    } else {
+      var doc = Bokeh.index[this.plot_id].model.document;
+    }
+    if (this.receiver === null) { return }
+    var receiver = this.receiver;
+    if (msg.buffers.length > 0) {
+      receiver.consume(msg.buffers[0].buffer)
+    } else {
+      receiver.consume(msg.content.data)
+    }
+    const comm_msg = receiver.message;
+    if ((comm_msg != null) && (doc != null)) {
+      doc.apply_json_patch(comm_msg.content, comm_msg.buffers)
+    }
+  }
+}
+
+// Extend Bokeh widgets with backend specific methods
+extend(BokehSelectionWidget.prototype, BokehMethods);
+extend(BokehScrubberWidget.prototype, BokehMethods);
+
+window.HoloViews.BokehSelectionWidget = BokehSelectionWidget
+window.HoloViews.BokehScrubberWidget = BokehScrubberWidget
+</script>
+<script type="text/javascript">
+    function JupyterCommManager() {
+    }
+
+    JupyterCommManager.prototype.register_target = function(plot_id, comm_id, msg_handler) {
+      if (window.comm_manager || ((window.Jupyter !== undefined) && (Jupyter.notebook.kernel != null))) {
+        var comm_manager = window.comm_manager || Jupyter.notebook.kernel.comm_manager;
+        comm_manager.register_target(comm_id, function(comm) {
+          comm.on_msg(msg_handler);
+        });
+      } else if ((plot_id in window.PyViz.kernels) && (window.PyViz.kernels[plot_id])) {
+        window.PyViz.kernels[plot_id].registerCommTarget(comm_id, function(comm) {
+          comm.onMsg = msg_handler;
+        });
+      }
+    }
+
+    JupyterCommManager.prototype.get_client_comm = function(plot_id, comm_id, msg_handler) {
+      if (comm_id in window.PyViz.comms) {
+        return window.PyViz.comms[comm_id];
+      } else if (window.comm_manager || ((window.Jupyter !== undefined) && (Jupyter.notebook.kernel != null))) {
+        var comm_manager = window.comm_manager || Jupyter.notebook.kernel.comm_manager;
+        var comm = comm_manager.new_comm(comm_id, {}, {}, {}, comm_id);
+        if (msg_handler) {
+          comm.on_msg(msg_handler);
+        }
+      } else if ((plot_id in window.PyViz.kernels) && (window.PyViz.kernels[plot_id])) {
+        var comm = window.PyViz.kernels[plot_id].connectToComm(comm_id);
+        comm.open();
+        if (msg_handler) {
+          comm.onMsg = msg_handler;
+        }
+      }
+
+      window.PyViz.comms[comm_id] = comm;
+      return comm;
+    }
+
+    window.PyViz.comm_manager = new JupyterCommManager();
+    </script>
+
+<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/css/bootstrap.min.css">
+<link rel="stylesheet" href="https://code.jquery.com/ui/1.10.4/themes/smoothness/jquery-ui.css">
+<style>div.bk-hbox {
+    display: flex;
+    justify-content: center;
+}
+
+div.bk-hbox div.bk-plot {
+    padding: 8px;
+}
+
+div.bk-hbox div.bk-data-table {
+    padding: 20px;
+}
+
+div.hololayout {
+  display: flex;
+  align-items: center;
+  margin: 0;
+}
+
+div.holoframe {
+  width: 75%;
+}
+
+div.holowell {
+  display: flex;
+  align-items: center;
+}
+
+form.holoform {
+  background-color: #fafafa;
+  border-radius: 5px;
+  overflow: hidden;
+  padding-left: 0.8em;
+  padding-right: 0.8em;
+  padding-top: 0.4em;
+  padding-bottom: 0.4em;
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.05);
+  margin-bottom: 20px;
+  border: 1px solid #e3e3e3;
+}
+
+div.holowidgets {
+  padding-right: 0;
+  width: 25%;
+}
+
+div.holoslider {
+  min-height: 0 !important;
+  height: 0.8em;
+  width: 100%;
+}
+
+div.holoformgroup {
+  padding-top: 0.5em;
+  margin-bottom: 0.5em;
+}
+
+div.hologroup {
+  padding-left: 0;
+  padding-right: 0.8em;
+  width: 100%;
+}
+
+.holoselect {
+  width: 92%;
+  margin-left: 0;
+  margin-right: 0;
+}
+
+.holotext {
+  padding-left:  0.5em;
+  padding-right: 0;
+  width: 100%;
+}
+
+.holowidgets .ui-resizable-se {
+  visibility: hidden
+}
+
+.holoframe > .ui-resizable-se {
+  visibility: hidden
+}
+
+.holowidgets .ui-resizable-s {
+  visibility: hidden
+}
+
+
+/* CSS rules for noUISlider based slider used by JupyterLab extension  */
+
+.noUi-handle {
+  width: 20px !important;
+  height: 20px !important;
+  left: -5px !important;
+  top: -5px !important;
+}
+
+.noUi-handle:before, .noUi-handle:after {
+  visibility: hidden;
+  height: 0px;
+}
+
+.noUi-target {
+  margin-left: 0.5em;
+  margin-right: 0.5em;
+}
+</style><div style='display: table; margin: 0 auto;'>
+
+
+
+
+
+
+  <div class="bk-root" id="6c9dfdaf-0136-4ffd-9c2e-6411543c2a12" data-root-id="42552"></div>
+
+<script type="text/javascript">
+  (function(root) {
+  function embed_document(root) {
+    
+  var docs_json = {"f3e793d7-8c23-468b-9560-8bfd418f08cd":{"roots":{"references":[{"attributes":{"align":null,"below":[{"id":"42561","type":"CategoricalAxis"}],"center":[{"id":"42564","type":"Grid"},{"id":"42569","type":"Grid"}],"left":[{"id":"42565","type":"LinearAxis"}],"margin":null,"min_border_bottom":10,"min_border_left":10,"min_border_right":10,"min_border_top":10,"plot_height":800,"plot_width":1000,"renderers":[{"id":"42585","type":"GlyphRenderer"},{"id":"42591","type":"GlyphRenderer"},{"id":"42597","type":"GlyphRenderer"},{"id":"42603","type":"GlyphRenderer"}],"sizing_mode":"fixed","title":{"id":"42553","type":"Title"},"toolbar":{"id":"42575","type":"Toolbar"},"x_range":{"id":"42550","type":"FactorRange"},"x_scale":{"id":"42557","type":"CategoricalScale"},"y_range":{"id":"42551","type":"Range1d"},"y_scale":{"id":"42559","type":"LinearScale"}},"id":"42552","subtype":"Figure","type":"Plot"},{"attributes":{},"id":"42566","type":"BasicTicker"},{"attributes":{},"id":"42619","type":"Selection"},{"attributes":{"data_source":{"id":"42587","type":"ColumnDataSource"},"glyph":{"id":"42589","type":"Segment"},"hover_glyph":null,"muted_glyph":null,"nonselection_glyph":{"id":"42590","type":"Segment"},"selection_glyph":null,"view":{"id":"42592","type":"CDSView"}},"id":"42591","type":"GlyphRenderer"},{"attributes":{"fill_alpha":{"value":0.1},"fill_color":{"value":"white"},"line_alpha":{"value":0.1},"line_color":{"value":"white"},"x":{"field":"x"},"y":{"field":"y"}},"id":"42602","type":"Scatter"},{"attributes":{},"id":"42572","type":"WheelZoomTool"},{"attributes":{},"id":"42562","type":"CategoricalTicker"},{"attributes":{"x0":{"field":"x"},"x1":{"field":"x"},"y0":{"field":"y0"},"y1":{"field":"y1"}},"id":"42589","type":"Segment"},{"attributes":{},"id":"42571","type":"PanTool"},{"attributes":{},"id":"42620","type":"UnionRenderers"},{"attributes":{},"id":"42617","type":"Selection"},{"attributes":{},"id":"42621","type":"Selection"},{"attributes":{"grid_line_color":null,"ticker":{"id":"42562","type":"CategoricalTicker"}},"id":"42564","type":"Grid"},{"attributes":{"bottom":{"field":"bottom"},"fill_alpha":{"value":0.1},"fill_color":{"value":"black"},"line_alpha":{"value":0.1},"line_color":{"value":"black"},"top":{"field":"top"},"width":{"value":0.1},"x":{"field":"x"}},"id":"42596","type":"VBar"},{"attributes":{},"id":"42570","type":"SaveTool"},{"attributes":{},"id":"42618","type":"UnionRenderers"},{"attributes":{},"id":"42615","type":"Selection"},{"attributes":{},"id":"42605","type":"CategoricalTickFormatter"},{"attributes":{"bottom":{"field":"bottom"},"fill_color":{"value":"black"},"top":{"field":"top"},"width":{"value":0.1},"x":{"field":"x"}},"id":"42595","type":"VBar"},{"attributes":{"fill_color":{"value":"white"},"line_color":{"value":"white"},"x":{"field":"x"},"y":{"field":"y"}},"id":"42601","type":"Scatter"},{"attributes":{"bottom_units":"screen","fill_alpha":{"value":0.5},"fill_color":{"value":"lightgrey"},"left_units":"screen","level":"overlay","line_alpha":{"value":1.0},"line_color":{"value":"black"},"line_dash":[4,4],"line_width":{"value":2},"render_mode":"css","right_units":"screen","top_units":"screen"},"id":"42622","type":"BoxAnnotation"},{"attributes":{"source":{"id":"42593","type":"ColumnDataSource"}},"id":"42598","type":"CDSView"},{"attributes":{"source":{"id":"42587","type":"ColumnDataSource"}},"id":"42592","type":"CDSView"},{"attributes":{"callback":null,"data":{"x":[[2006,0],[2007,0],[2008,0],[2009,0],[2010,0]],"y0":[35311,39300,40000,34900,55000],"y1":[348000,340000,315000,340000,335000]},"selected":{"id":"42617","type":"Selection"},"selection_policy":{"id":"42616","type":"UnionRenderers"}},"id":"42587","type":"ColumnDataSource"},{"attributes":{"dimension":1,"grid_line_color":null,"ticker":{"id":"42566","type":"BasicTicker"}},"id":"42569","type":"Grid"},{"attributes":{"data_source":{"id":"42581","type":"ColumnDataSource"},"glyph":{"id":"42583","type":"Patches"},"hover_glyph":null,"muted_glyph":null,"nonselection_glyph":{"id":"42584","type":"Patches"},"selection_glyph":null,"view":{"id":"42586","type":"CDSView"}},"id":"42585","type":"GlyphRenderer"},{"attributes":{"data_source":{"id":"42593","type":"ColumnDataSource"},"glyph":{"id":"42595","type":"VBar"},"hover_glyph":null,"muted_glyph":null,"nonselection_glyph":{"id":"42596","type":"VBar"},"selection_glyph":null,"view":{"id":"42598","type":"CDSView"}},"id":"42597","type":"GlyphRenderer"},{"attributes":{"source":{"id":"42581","type":"ColumnDataSource"}},"id":"42586","type":"CDSView"},{"attributes":{"data_source":{"id":"42599","type":"ColumnDataSource"},"glyph":{"id":"42601","type":"Scatter"},"hover_glyph":null,"muted_glyph":null,"nonselection_glyph":{"id":"42602","type":"Scatter"},"selection_glyph":null,"view":{"id":"42604","type":"CDSView"}},"id":"42603","type":"GlyphRenderer"},{"attributes":{"callback":null,"data":{"x":[[2006,0],[2007,0],[2008,0],[2009,0],[2010,0]],"y":{"__ndarray__":"AAAAANgEBEEAAAAAwGIEQQAAAAAABQRBAAAAAIDGA0EAAAAAwOsCQQ==","dtype":"float64","shape":[5]}},"selected":{"id":"42621","type":"Selection"},"selection_policy":{"id":"42620","type":"UnionRenderers"}},"id":"42599","type":"ColumnDataSource"},{"attributes":{"source":{"id":"42599","type":"ColumnDataSource"}},"id":"42604","type":"CDSView"},{"attributes":{"active_drag":"auto","active_inspect":"auto","active_multi":null,"active_scroll":"auto","active_tap":"auto","tools":[{"id":"42570","type":"SaveTool"},{"id":"42571","type":"PanTool"},{"id":"42572","type":"WheelZoomTool"},{"id":"42573","type":"BoxZoomTool"},{"id":"42574","type":"ResetTool"}]},"id":"42575","type":"Toolbar"},{"attributes":{},"id":"42557","type":"CategoricalScale"},{"attributes":{"fill_alpha":{"value":0.5},"fill_color":{"value":"#1f77b3"},"line_alpha":{"value":0.1},"line_color":{"value":"black"},"xs":{"field":"xs"},"ys":{"field":"ys"}},"id":"42584","type":"Patches"},{"attributes":{"callback":null,"factors":["2006","2007","2008","2009","2010"],"tags":[[["YrSold","YrSold",null]]]},"id":"42550","type":"FactorRange"},{"attributes":{"callback":null,"data":{"bottom":{"__ndarray__":"AAAAAHgJAEEAAAAAwLb/QAAAAACQBQBBAAAAACCU/kAAAAAAQEb/QA==","dtype":"float64","shape":[5]},"top":{"__ndarray__":"AAAAAPS0CkEAAAAAYMsKQQAAAADARAlBAAAAAHD4CUEAAAAAEAgKQQ==","dtype":"float64","shape":[5]},"x":[[2006,0],[2007,0],[2008,0],[2009,0],[2010,0]]},"selected":{"id":"42619","type":"Selection"},"selection_policy":{"id":"42618","type":"UnionRenderers"}},"id":"42593","type":"ColumnDataSource"},{"attributes":{"axis_label":"YrSold","bounds":"auto","formatter":{"id":"42605","type":"CategoricalTickFormatter"},"major_label_orientation":"horizontal","ticker":{"id":"42562","type":"CategoricalTicker"}},"id":"42561","type":"CategoricalAxis"},{"attributes":{"line_alpha":{"value":0.1},"line_color":{"value":"black"},"x0":{"field":"x"},"x1":{"field":"x"},"y0":{"field":"y0"},"y1":{"field":"y1"}},"id":"42590","type":"Segment"},{"attributes":{"overlay":{"id":"42622","type":"BoxAnnotation"}},"id":"42573","type":"BoxZoomTool"},{"attributes":{},"id":"42559","type":"LinearScale"},{"attributes":{},"id":"42616","type":"UnionRenderers"},{"attributes":{"fill_alpha":{"value":0.5},"fill_color":{"value":"#1f77b3"},"xs":{"field":"xs"},"ys":{"field":"ys"}},"id":"42583","type":"Patches"},{"attributes":{},"id":"42614","type":"UnionRenderers"},{"attributes":{"callback":null,"data":{"xs":[[[2006,-1.1575967934320295e-08],[2006,-5.960196084902818e-08],[2006,-2.74263823454251e-07],[2006,-1.1284961568557537e-06],[2006,-4.154821687152195e-06],[2006,-1.3700688519179504e-05],[2006,-4.0520785246024974e-05],[2006,-0.00010771599428322853],[2006,-0.0002582228695699505],[2006,-0.0005612234490905785],[2006,-0.0011153307064310136],[2006,-0.0020535609770262774],[2006,-0.0035688738720724388],[2006,-0.0059868126776205025],[2006,-0.009890377955884804],[2006,-0.016242136979276043],[2006,-0.02638625433210174],[2006,-0.04182601550814967],[2006,-0.06380359840739588],[2006,-0.09287852992283713],[2006,-0.12873505104198238],[2006,-0.170262102580367],[2006,-0.21570263626300537],[2006,-0.26264512990419764],[2006,-0.3079042728217858],[2006,-0.347627077127143],[2006,-0.3779055473550466],[2006,-0.39576325647442856],[2006,-0.4],[2006,-0.39141770014481775],[2006,-0.37238554818724884],[2006,-0.346114918159917],[2006,-0.3160383777059994],[2006,-0.285382007352625],[2006,-0.2567742065691171],[2006,-0.23181641798131622],[2006,-0.21081067648785098],[2006,-0.19292317259910885],[2006,-0.17679710216448508],[2006,-0.16126090664991055],[2006,-0.1457068349301585],[2006,-0.13003169753480517],[2006,-0.11440314889840059],[2006,-0.09915544306758585],[2006,-0.08483187384690508],[2006,-0.07214799976390351],[2006,-0.06173475956281252],[2006,-0.05380618189689562],[2006,-0.048028543113731934],[2006,-0.043699195341814295],[2006,-0.04007697352193035],[2006,-0.036621617005948987],[2006,-0.033041364484140905],[2006,-0.029229361517285037],[2006,-0.025215923184652433],[2006,-0.02117591262726015],[2006,-0.017431249531443538],[2006,-0.014375716838086687],[2006,-0.012320443594465554],[2006,-0.011340292726275186],[2006,-0.011221069358292798],[2006,-0.0115468476030758],[2006,-0.011872607745394847],[2006,-0.011875194758820528],[2006,-0.011407121833976238],[2006,-0.0104614323093567],[2006,-0.00911404683242209],[2006,-0.007495785852338875],[2006,-0.005789287718305356],[2006,-0.004213388189229989],[2006,-0.0029764506128886602],[2006,-0.002217020929912021],[2006,-0.0019623849218281383],[2006,-0.00212076961615406],[2006,-0.002507264398309746],[2006,-0.002899285374532122],[2006,-0.0031120194047766425],[2006,-0.003068616308621123],[2006,-0.0028284594759878153],[2006,-0.0025504338360426626],[2006,-0.002404493082685265],[2006,-0.0024776568473747775],[2006,-0.0027256485144297516],[2006,-0.0029961752348817063],[2006,-0.003109952134959119],[2006,-0.0029529577237497654],[2006,-0.002527699385357629],[2006,-0.0019385090441324483],[2006,-0.0013285711646793094],[2006,-0.0008128930725464008],[2006,-0.0004438499995583858],[2006,-0.00021623318251539218],[2006,-9.398606677207556e-05],[2006,-3.644587125943902e-05],[2006,-1.2608761207518615e-05],[2006,-3.891651367153581e-06],[2006,-1.071598609838683e-06],[2006,-2.632490283928734e-07],[2006,-5.769493910148845e-08],[2006,-1.1280930483556652e-08],[2006,1.1280930483556652e-08],[2006,5.769493910148845e-08],[2006,2.632490283928734e-07],[2006,1.071598609838683e-06],[2006,3.891651367153581e-06],[2006,1.2608761207518615e-05],[2006,3.644587125943902e-05],[2006,9.398606677207556e-05],[2006,0.00021623318251539218],[2006,0.0004438499995583858],[2006,0.0008128930725464008],[2006,0.0013285711646793094],[2006,0.0019385090441324483],[2006,0.002527699385357629],[2006,0.0029529577237497654],[2006,0.003109952134959119],[2006,0.0029961752348817063],[2006,0.0027256485144297516],[2006,0.0024776568473747775],[2006,0.002404493082685265],[2006,0.0025504338360426626],[2006,0.0028284594759878153],[2006,0.003068616308621123],[2006,0.0031120194047766425],[2006,0.002899285374532122],[2006,0.002507264398309746],[2006,0.00212076961615406],[2006,0.0019623849218281383],[2006,0.002217020929912021],[2006,0.0029764506128886602],[2006,0.004213388189229989],[2006,0.005789287718305356],[2006,0.007495785852338875],[2006,0.00911404683242209],[2006,0.0104614323093567],[2006,0.011407121833976238],[2006,0.011875194758820528],[2006,0.011872607745394847],[2006,0.0115468476030758],[2006,0.011221069358292798],[2006,0.011340292726275186],[2006,0.012320443594465554],[2006,0.014375716838086687],[2006,0.017431249531443538],[2006,0.02117591262726015],[2006,0.025215923184652433],[2006,0.029229361517285037],[2006,0.033041364484140905],[2006,0.036621617005948987],[2006,0.04007697352193035],[2006,0.043699195341814295],[2006,0.048028543113731934],[2006,0.05380618189689562],[2006,0.06173475956281252],[2006,0.07214799976390351],[2006,0.08483187384690508],[2006,0.09915544306758585],[2006,0.11440314889840059],[2006,0.13003169753480517],[2006,0.1457068349301585],[2006,0.16126090664991055],[2006,0.17679710216448508],[2006,0.19292317259910885],[2006,0.21081067648785098],[2006,0.23181641798131622],[2006,0.2567742065691171],[2006,0.285382007352625],[2006,0.3160383777059994],[2006,0.346114918159917],[2006,0.37238554818724884],[2006,0.39141770014481775],[2006,0.4],[2006,0.39576325647442856],[2006,0.3779055473550466],[2006,0.347627077127143],[2006,0.3079042728217858],[2006,0.26264512990419764],[2006,0.21570263626300537],[2006,0.170262102580367],[2006,0.12873505104198238],[2006,0.09287852992283713],[2006,0.06380359840739588],[2006,0.04182601550814967],[2006,0.02638625433210174],[2006,0.016242136979276043],[2006,0.009890377955884804],[2006,0.0059868126776205025],[2006,0.0035688738720724388],[2006,0.0020535609770262774],[2006,0.0011153307064310136],[2006,0.0005612234490905785],[2006,0.0002582228695699505],[2006,0.00010771599428322853],[2006,4.0520785246024974e-05],[2006,1.3700688519179504e-05],[2006,4.154821687152195e-06],[2006,1.1284961568557537e-06],[2006,2.74263823454251e-07],[2006,5.960196084902818e-08],[2006,1.1575967934320295e-08]],[[2007,-1.0346728046412822e-08],[2007,-6.164943337449203e-08],[2007,-3.211351175867633e-07],[2007,-1.4641038917458779e-06],[2007,-5.852430250514911e-06],[2007,-2.0565658626107737e-05],[2007,-6.379383098814611e-05],[2007,-0.00017578037804245016],[2007,-0.00043428463295995545],[2007,-0.0009748489736822372],[2007,-0.0020226136821526494],[2007,-0.003954189668414284],[2007,-0.007409323071795661],[2007,-0.013440437622354957],[2007,-0.02362766629086932],[2007,-0.0400435118634794],[2007,-0.06496519838552268],[2007,-0.10028273903237242],[2007,-0.1466057345028011],[2007,-0.20220773020302452],[2007,-0.26226898935746584],[2007,-0.31919678314851935],[2007,-0.3645593477030274],[2007,-0.39208492625578506],[2007,-0.4],[2007,-0.3910596012121146],[2007,-0.37029998926328606],[2007,-0.34234956704118347],[2007,-0.31023021384492044],[2007,-0.2759315638797031],[2007,-0.2414752302783509],[2007,-0.20920581163012547],[2007,-0.18122109896075972],[2007,-0.15869744895980775],[2007,-0.1416907926159874],[2007,-0.12937303611706966],[2007,-0.12038215708826741],[2007,-0.11311932360449711],[2007,-0.10601886523010358],[2007,-0.09781854510324126],[2007,-0.0877963997721563],[2007,-0.07594257454087305],[2007,-0.06301950840457729],[2007,-0.05039391778025335],[2007,-0.039566197525733725],[2007,-0.03155810772859385],[2007,-0.026514898510075303],[2007,-0.02377224021454418],[2007,-0.02230551057803694],[2007,-0.02123032321431651],[2007,-0.02005402558726654],[2007,-0.018619552255579416],[2007,-0.01691269201169428],[2007,-0.01493909632718212],[2007,-0.012729085281125008],[2007,-0.010380876400992991],[2007,-0.008052095816658517],[2007,-0.005905211867912013],[2007,-0.004062702223943809],[2007,-0.002594376345657933],[2007,-0.001518807707801104],[2007,-0.0008052054817547299],[2007,-0.0003825281576760773],[2007,-0.00016150986179703226],[2007,-6.024327014566899e-05],[2007,-1.9768523112890164e-05],[2007,-5.690640787365439e-06],[2007,-1.434311597716199e-06],[2007,-3.161597709388188e-07],[2007,-6.112235160311369e-08],[2007,-1.213702553543338e-08],[2007,-1.4526934470839465e-08],[2007,-7.827890755923954e-08],[2007,-4.0934648406288944e-07],[2007,-1.876392999942309e-06],[2007,-7.52394059468046e-06],[2007,-2.639621715969755e-05],[2007,-8.104391992103251e-05],[2007,-0.00021781526285675744],[2007,-0.000512564235406414],[2007,-0.001056323918622235],[2007,-0.001906876116780245],[2007,-0.0030157858756468827],[2007,-0.0041792004486131806],[2007,-0.005075120737865628],[2007,-0.005401171694290485],[2007,-0.005037639498222984],[2007,-0.004117688971968712],[2007,-0.0029494317992612928],[2007,-0.0018511208849146194],[2007,-0.0010178409914188462],[2007,-0.0004902267444429126],[2007,-0.00020677482750167025],[2007,-7.636332162249947e-05],[2007,-2.4686252006981544e-05],[2007,-6.983961717757963e-06],[2007,-1.7286886817506075e-06],[2007,-3.74276613004585e-07],[2007,-7.086386141801914e-08],[2007,-1.1730386803830861e-08],[2007,1.1730386803830861e-08],[2007,7.086386141801914e-08],[2007,3.74276613004585e-07],[2007,1.7286886817506075e-06],[2007,6.983961717757963e-06],[2007,2.4686252006981544e-05],[2007,7.636332162249947e-05],[2007,0.00020677482750167025],[2007,0.0004902267444429126],[2007,0.0010178409914188462],[2007,0.0018511208849146194],[2007,0.0029494317992612928],[2007,0.004117688971968712],[2007,0.005037639498222984],[2007,0.005401171694290485],[2007,0.005075120737865628],[2007,0.0041792004486131806],[2007,0.0030157858756468827],[2007,0.001906876116780245],[2007,0.001056323918622235],[2007,0.000512564235406414],[2007,0.00021781526285675744],[2007,8.104391992103251e-05],[2007,2.639621715969755e-05],[2007,7.52394059468046e-06],[2007,1.876392999942309e-06],[2007,4.0934648406288944e-07],[2007,7.827890755923954e-08],[2007,1.4526934470839465e-08],[2007,1.213702553543338e-08],[2007,6.112235160311369e-08],[2007,3.161597709388188e-07],[2007,1.434311597716199e-06],[2007,5.690640787365439e-06],[2007,1.9768523112890164e-05],[2007,6.024327014566899e-05],[2007,0.00016150986179703226],[2007,0.0003825281576760773],[2007,0.0008052054817547299],[2007,0.001518807707801104],[2007,0.002594376345657933],[2007,0.004062702223943809],[2007,0.005905211867912013],[2007,0.008052095816658517],[2007,0.010380876400992991],[2007,0.012729085281125008],[2007,0.01493909632718212],[2007,0.01691269201169428],[2007,0.018619552255579416],[2007,0.02005402558726654],[2007,0.02123032321431651],[2007,0.02230551057803694],[2007,0.02377224021454418],[2007,0.026514898510075303],[2007,0.03155810772859385],[2007,0.039566197525733725],[2007,0.05039391778025335],[2007,0.06301950840457729],[2007,0.07594257454087305],[2007,0.0877963997721563],[2007,0.09781854510324126],[2007,0.10601886523010358],[2007,0.11311932360449711],[2007,0.12038215708826741],[2007,0.12937303611706966],[2007,0.1416907926159874],[2007,0.15869744895980775],[2007,0.18122109896075972],[2007,0.20920581163012547],[2007,0.2414752302783509],[2007,0.2759315638797031],[2007,0.31023021384492044],[2007,0.34234956704118347],[2007,0.37029998926328606],[2007,0.3910596012121146],[2007,0.4],[2007,0.39208492625578506],[2007,0.3645593477030274],[2007,0.31919678314851935],[2007,0.26226898935746584],[2007,0.20220773020302452],[2007,0.1466057345028011],[2007,0.10028273903237242],[2007,0.06496519838552268],[2007,0.0400435118634794],[2007,0.02362766629086932],[2007,0.013440437622354957],[2007,0.007409323071795661],[2007,0.003954189668414284],[2007,0.0020226136821526494],[2007,0.0009748489736822372],[2007,0.00043428463295995545],[2007,0.00017578037804245016],[2007,6.379383098814611e-05],[2007,2.0565658626107737e-05],[2007,5.852430250514911e-06],[2007,1.4641038917458779e-06],[2007,3.211351175867633e-07],[2007,6.164943337449203e-08],[2007,1.0346728046412822e-08]],[[2008,-1.3598109353563328e-08],[2008,-5.528289542585656e-08],[2008,-2.0772020869270171e-07],[2008,-7.217319043706774e-07],[2008,-2.3204213477439654e-06],[2008,-6.90877966528714e-06],[2008,-1.9068339675957484e-05],[2008,-4.8847615330722846e-05],[2008,-0.00011632555678156756],[2008,-0.00025803061008554824],[2008,-0.0005344695959815584],[2008,-0.001037052541537383],[2008,-0.0018923285440860815],[2008,-0.0032624205627740984],[2008,-0.005342691189487568],[2008,-0.008359270316462525],[2008,-0.012567796313340214],[2008,-0.01825029564872719],[2008,-0.02570351072340922],[2008,-0.035215384115707286],[2008,-0.0470384335472752],[2008,-0.06138052701468544],[2008,-0.07842955276310587],[2008,-0.09840142557508996],[2008,-0.12156524528153415],[2008,-0.14818607793612915],[2008,-0.17835666262595407],[2008,-0.21175426239912723],[2008,-0.24741987608491064],[2008,-0.28367698762662646],[2008,-0.3182737656685183],[2008,-0.34875730414678574],[2008,-0.3729918673018402],[2008,-0.38964514633101655],[2008,-0.39843474723872263],[2008,-0.4],[2008,-0.39544080907165496],[2008,-0.3857592497797296],[2008,-0.37151675880725293],[2008,-0.35290139502614365],[2008,-0.33014345988856186],[2008,-0.30399167674294825],[2008,-0.2759213568992644],[2008,-0.2479156457760031],[2008,-0.22192207924849142],[2008,-0.1992702328577341],[2008,-0.18034115325474795],[2008,-0.1646255684177008],[2008,-0.15110257239616226],[2008,-0.1387295962195957],[2008,-0.12681891210747118],[2008,-0.11517105935702765],[2008,-0.10397308940889234],[2008,-0.09357227336830631],[2008,-0.08426037934725296],[2008,-0.0761570150304056],[2008,-0.06920570772047453],[2008,-0.06323934826680726],[2008,-0.058055616239031584],[2008,-0.05346317318499993],[2008,-0.04929391581798993],[2008,-0.04540211647568173],[2008,-0.041674590252287536],[2008,-0.03805885451728741],[2008,-0.034592954005405595],[2008,-0.03140898993470146],[2008,-0.028691965873945277],[2008,-0.026601227788850396],[2008,-0.02518722663572209],[2008,-0.02434490913730984],[2008,-0.023830299769143134],[2008,-0.02333630328527097],[2008,-0.022594294251033882],[2008,-0.021455988793101483],[2008,-0.019921731130496684],[2008,-0.018109359620841817],[2008,-0.01618592989805925],[2008,-0.014297735171475376],[2008,-0.0125276417055082],[2008,-0.010890019154813163],[2008,-0.009354955770001309],[2008,-0.007883812092154248],[2008,-0.0064587051506658655],[2008,-0.005095368984192733],[2008,-0.0038375562485010195],[2008,-0.002738681080357002],[2008,-0.0018406383465887364],[2008,-0.0011593103831119482],[2008,-0.0006816391211173283],[2008,-0.00037301471317548044],[2008,-0.00018954238556416825],[2008,-8.92736051195225e-05],[2008,-3.8921203371653315e-05],[2008,-1.5690857528767857e-05],[2008,-5.8447073352107386e-06],[2008,-2.010365444996837e-06],[2008,-6.382432578734219e-07],[2008,-1.8695909241178363e-07],[2008,-5.051752954914325e-08],[2008,-1.2588848691753167e-08],[2008,1.2588848691753167e-08],[2008,5.051752954914325e-08],[2008,1.8695909241178363e-07],[2008,6.382432578734219e-07],[2008,2.010365444996837e-06],[2008,5.8447073352107386e-06],[2008,1.5690857528767857e-05],[2008,3.8921203371653315e-05],[2008,8.92736051195225e-05],[2008,0.00018954238556416825],[2008,0.00037301471317548044],[2008,0.0006816391211173283],[2008,0.0011593103831119482],[2008,0.0018406383465887364],[2008,0.002738681080357002],[2008,0.0038375562485010195],[2008,0.005095368984192733],[2008,0.0064587051506658655],[2008,0.007883812092154248],[2008,0.009354955770001309],[2008,0.010890019154813163],[2008,0.0125276417055082],[2008,0.014297735171475376],[2008,0.01618592989805925],[2008,0.018109359620841817],[2008,0.019921731130496684],[2008,0.021455988793101483],[2008,0.022594294251033882],[2008,0.02333630328527097],[2008,0.023830299769143134],[2008,0.02434490913730984],[2008,0.02518722663572209],[2008,0.026601227788850396],[2008,0.028691965873945277],[2008,0.03140898993470146],[2008,0.034592954005405595],[2008,0.03805885451728741],[2008,0.041674590252287536],[2008,0.04540211647568173],[2008,0.04929391581798993],[2008,0.05346317318499993],[2008,0.058055616239031584],[2008,0.06323934826680726],[2008,0.06920570772047453],[2008,0.0761570150304056],[2008,0.08426037934725296],[2008,0.09357227336830631],[2008,0.10397308940889234],[2008,0.11517105935702765],[2008,0.12681891210747118],[2008,0.1387295962195957],[2008,0.15110257239616226],[2008,0.1646255684177008],[2008,0.18034115325474795],[2008,0.1992702328577341],[2008,0.22192207924849142],[2008,0.2479156457760031],[2008,0.2759213568992644],[2008,0.30399167674294825],[2008,0.33014345988856186],[2008,0.35290139502614365],[2008,0.37151675880725293],[2008,0.3857592497797296],[2008,0.39544080907165496],[2008,0.4],[2008,0.39843474723872263],[2008,0.38964514633101655],[2008,0.3729918673018402],[2008,0.34875730414678574],[2008,0.3182737656685183],[2008,0.28367698762662646],[2008,0.24741987608491064],[2008,0.21175426239912723],[2008,0.17835666262595407],[2008,0.14818607793612915],[2008,0.12156524528153415],[2008,0.09840142557508996],[2008,0.07842955276310587],[2008,0.06138052701468544],[2008,0.0470384335472752],[2008,0.035215384115707286],[2008,0.02570351072340922],[2008,0.01825029564872719],[2008,0.012567796313340214],[2008,0.008359270316462525],[2008,0.005342691189487568],[2008,0.0032624205627740984],[2008,0.0018923285440860815],[2008,0.001037052541537383],[2008,0.0005344695959815584],[2008,0.00025803061008554824],[2008,0.00011632555678156756],[2008,4.8847615330722846e-05],[2008,1.9068339675957484e-05],[2008,6.90877966528714e-06],[2008,2.3204213477439654e-06],[2008,7.217319043706774e-07],[2008,2.0772020869270171e-07],[2008,5.528289542585656e-08],[2008,1.3598109353563328e-08]],[[2009,-1.730796903931091e-08],[2009,-8.308895825121432e-08],[2009,-3.6072135994159896e-07],[2009,-1.4171499891368072e-06],[2009,-5.042719832249095e-06],[2009,-1.6272444147888684e-05],[2009,-4.7698983692166314e-05],[2009,-0.0001272991602056728],[2009,-0.00031026929302179683],[2009,-0.0006934681207243545],[2009,-0.0014289053973464399],[2009,-0.002732694536670981],[2009,-0.004890031301123622],[2009,-0.008263155899191165],[2009,-0.013310931041764534],[2009,-0.02061889105348131],[2009,-0.03091956667918921],[2009,-0.04506782847794274],[2009,-0.06393974069076634],[2009,-0.08824925989474762],[2009,-0.11831315482832008],[2009,-0.15382258712128705],[2009,-0.19368826108460885],[2009,-0.23601609601117715],[2009,-0.2782502776068058],[2009,-0.31749248370732347],[2009,-0.35096082226183356],[2009,-0.3764851922548641],[2009,-0.39287491230792293],[2009,-0.4],[2009,-0.3985427551510185],[2009,-0.3895598972358816],[2009,-0.37411781025921365],[2009,-0.3532071303818774],[2009,-0.3279272068133976],[2009,-0.29972059977369375],[2009,-0.2704030494517801],[2009,-0.24189598362817943],[2009,-0.21578609014857286],[2009,-0.19294480266984818],[2009,-0.17338915271767627],[2009,-0.1564293273002387],[2009,-0.1410293234690174],[2009,-0.12624698958817684],[2009,-0.1116042648287098],[2009,-0.09725519394805782],[2009,-0.08388102019462726],[2009,-0.07235087039159581],[2009,-0.063299930763473],[2009,-0.056824493723786756],[2009,-0.05243572638543934],[2009,-0.049279692415574554],[2009,-0.04649714136463419],[2009,-0.04353633516407193],[2009,-0.04027297139228359],[2009,-0.03690509935305312],[2009,-0.03371301672824286],[2009,-0.03083601044225949],[2009,-0.02818651670844215],[2009,-0.02552498667814896],[2009,-0.022624357937939273],[2009,-0.019417799321818554],[2009,-0.016052528458567982],[2009,-0.012832823438058825],[2009,-0.010091572967257247],[2009,-0.008060165009201791],[2009,-0.006799537108920882],[2009,-0.006213406190666054],[2009,-0.00611419931465576],[2009,-0.0062899738033622],[2009,-0.0065411560363493595],[2009,-0.006695050316056168],[2009,-0.006624640758879575],[2009,-0.006281428190206837],[2009,-0.005721770267940116],[2009,-0.005095819163071363],[2009,-0.0045893649972389445],[2009,-0.004343107616002698],[2009,-0.004391909057000437],[2009,-0.00465451883178293],[2009,-0.0049731853446839044],[2009,-0.005176753010590761],[2009,-0.005136573410859037],[2009,-0.004798166271839866],[2009,-0.004186958163552204],[2009,-0.003392978018041736],[2009,-0.0025401650537585354],[2009,-0.0017485723141864133],[2009,-0.0011021259611373683],[2009,-0.0006338387996615806],[2009,-0.00033166463770451643],[2009,-0.00015755804022421298],[2009,-6.783989607884968e-05],[2009,-2.644250288403863e-05],[2009,-9.321947025898376e-06],[2009,-2.970430200428519e-06],[2009,-8.551494959961156e-07],[2009,-2.2234814294881e-07],[2009,-5.2202797220039644e-08],[2009,-1.1065021719841848e-08],[2009,1.1065021719841848e-08],[2009,5.2202797220039644e-08],[2009,2.2234814294881e-07],[2009,8.551494959961156e-07],[2009,2.970430200428519e-06],[2009,9.321947025898376e-06],[2009,2.644250288403863e-05],[2009,6.783989607884968e-05],[2009,0.00015755804022421298],[2009,0.00033166463770451643],[2009,0.0006338387996615806],[2009,0.0011021259611373683],[2009,0.0017485723141864133],[2009,0.0025401650537585354],[2009,0.003392978018041736],[2009,0.004186958163552204],[2009,0.004798166271839866],[2009,0.005136573410859037],[2009,0.005176753010590761],[2009,0.0049731853446839044],[2009,0.00465451883178293],[2009,0.004391909057000437],[2009,0.004343107616002698],[2009,0.0045893649972389445],[2009,0.005095819163071363],[2009,0.005721770267940116],[2009,0.006281428190206837],[2009,0.006624640758879575],[2009,0.006695050316056168],[2009,0.0065411560363493595],[2009,0.0062899738033622],[2009,0.00611419931465576],[2009,0.006213406190666054],[2009,0.006799537108920882],[2009,0.008060165009201791],[2009,0.010091572967257247],[2009,0.012832823438058825],[2009,0.016052528458567982],[2009,0.019417799321818554],[2009,0.022624357937939273],[2009,0.02552498667814896],[2009,0.02818651670844215],[2009,0.03083601044225949],[2009,0.03371301672824286],[2009,0.03690509935305312],[2009,0.04027297139228359],[2009,0.04353633516407193],[2009,0.04649714136463419],[2009,0.049279692415574554],[2009,0.05243572638543934],[2009,0.056824493723786756],[2009,0.063299930763473],[2009,0.07235087039159581],[2009,0.08388102019462726],[2009,0.09725519394805782],[2009,0.1116042648287098],[2009,0.12624698958817684],[2009,0.1410293234690174],[2009,0.1564293273002387],[2009,0.17338915271767627],[2009,0.19294480266984818],[2009,0.21578609014857286],[2009,0.24189598362817943],[2009,0.2704030494517801],[2009,0.29972059977369375],[2009,0.3279272068133976],[2009,0.3532071303818774],[2009,0.37411781025921365],[2009,0.3895598972358816],[2009,0.3985427551510185],[2009,0.4],[2009,0.39287491230792293],[2009,0.3764851922548641],[2009,0.35096082226183356],[2009,0.31749248370732347],[2009,0.2782502776068058],[2009,0.23601609601117715],[2009,0.19368826108460885],[2009,0.15382258712128705],[2009,0.11831315482832008],[2009,0.08824925989474762],[2009,0.06393974069076634],[2009,0.04506782847794274],[2009,0.03091956667918921],[2009,0.02061889105348131],[2009,0.013310931041764534],[2009,0.008263155899191165],[2009,0.004890031301123622],[2009,0.002732694536670981],[2009,0.0014289053973464399],[2009,0.0006934681207243545],[2009,0.00031026929302179683],[2009,0.0001272991602056728],[2009,4.7698983692166314e-05],[2009,1.6272444147888684e-05],[2009,5.042719832249095e-06],[2009,1.4171499891368072e-06],[2009,3.6072135994159896e-07],[2009,8.308895825121432e-08],[2009,1.730796903931091e-08]],[[2010,-4.634527175012445e-08],[2010,-2.0097338994404968e-07],[2010,-8.000288105049082e-07],[2010,-2.9253046199830534e-06],[2010,-9.83244338400512e-06],[2010,-3.040737412541487e-05],[2010,-8.661984620626266e-05],[2010,-0.00022760446353943306],[2010,-0.0005525900837982386],[2010,-0.0012421403225312108],[2010,-0.00259146509173056],[2010,-0.005032558515242981],[2010,-0.009128245865788578],[2010,-0.015526613637678426],[2010,-0.024880872123430472],[2010,-0.037761442249430115],[2010,-0.05460000941286811],[2010,-0.07569443807769319],[2010,-0.10126365215232712],[2010,-0.13148698645830467],[2010,-0.1664278971979524],[2010,-0.20576922763354866],[2010,-0.2483951380025472],[2010,-0.29200602101171413],[2010,-0.3330513293795314],[2010,-0.3672082108026149],[2010,-0.3903958209817233],[2010,-0.4],[2010,-0.3957822230748736],[2010,-0.3800154202831257],[2010,-0.3567258261764503],[2010,-0.33034798157546624],[2010,-0.3043755006693405],[2010,-0.28056027679570467],[2010,-0.25890954620332357],[2010,-0.23833869282238435],[2010,-0.21757126967600873],[2010,-0.1958532268729061],[2010,-0.17323563364344466],[2010,-0.15044167568198766],[2010,-0.12851692118869196],[2010,-0.10848762950952238],[2010,-0.09114907908879508],[2010,-0.0769755919241939],[2010,-0.06608119739085475],[2010,-0.05818975670596946],[2010,-0.05264461890761224],[2010,-0.04852251092708517],[2010,-0.04487349370669785],[2010,-0.041015988015106954],[2010,-0.03674728217671331],[2010,-0.032348268678984486],[2010,-0.028366356873896416],[2010,-0.025286164006426484],[2010,-0.023259820641438275],[2010,-0.022028454897457604],[2010,-0.021054635287384202],[2010,-0.01977519783509024],[2010,-0.017836841743922967],[2010,-0.015208166429127399],[2010,-0.012140427674365708],[2010,-0.009025356255404463],[2010,-0.006234153059968874],[2010,-0.004008861677478807],[2010,-0.002434424870201903],[2010,-0.001476031314650722],[2010,-0.0010429258995678108],[2010,-0.0010408899939776158],[2010,-0.001392444564178693],[2010,-0.0020248350515830625],[2010,-0.002842730229834925],[2010,-0.0037103582531037415],[2010,-0.0044631937933510704],[2010,-0.0049523657358863105],[2010,-0.005102853198813954],[2010,-0.004952620359895351],[2010,-0.004645127933437596],[2010,-0.0043712875504375685],[2010,-0.004285210862150053],[2010,-0.0044339626319264405],[2010,-0.004735858705993649],[2010,-0.005018044486237168],[2010,-0.005094735698540428],[2010,-0.0048477397497841595],[2010,-0.004271305683703527],[2010,-0.003463905446255978],[2010,-0.002578058474349843],[2010,-0.0017585045089902143],[2010,-0.0010985960567650623],[2010,-0.0006284135727743043],[2010,-0.0003290826950774488],[2010,-0.0001577568002238919],[2010,-6.922794795813066e-05],[2010,-2.7808591755199453e-05],[2010,-1.0225341862511233e-05],[2010,-3.441728792645095e-06],[2010,-1.0604124081015994e-06],[2010,-2.990694245810092e-07],[2010,-7.72090401398972e-08],[2010,-1.8245810204743698e-08],[2010,1.8245810204743698e-08],[2010,7.72090401398972e-08],[2010,2.990694245810092e-07],[2010,1.0604124081015994e-06],[2010,3.441728792645095e-06],[2010,1.0225341862511233e-05],[2010,2.7808591755199453e-05],[2010,6.922794795813066e-05],[2010,0.0001577568002238919],[2010,0.0003290826950774488],[2010,0.0006284135727743043],[2010,0.0010985960567650623],[2010,0.0017585045089902143],[2010,0.002578058474349843],[2010,0.003463905446255978],[2010,0.004271305683703527],[2010,0.0048477397497841595],[2010,0.005094735698540428],[2010,0.005018044486237168],[2010,0.004735858705993649],[2010,0.0044339626319264405],[2010,0.004285210862150053],[2010,0.0043712875504375685],[2010,0.004645127933437596],[2010,0.004952620359895351],[2010,0.005102853198813954],[2010,0.0049523657358863105],[2010,0.0044631937933510704],[2010,0.0037103582531037415],[2010,0.002842730229834925],[2010,0.0020248350515830625],[2010,0.001392444564178693],[2010,0.0010408899939776158],[2010,0.0010429258995678108],[2010,0.001476031314650722],[2010,0.002434424870201903],[2010,0.004008861677478807],[2010,0.006234153059968874],[2010,0.009025356255404463],[2010,0.012140427674365708],[2010,0.015208166429127399],[2010,0.017836841743922967],[2010,0.01977519783509024],[2010,0.021054635287384202],[2010,0.022028454897457604],[2010,0.023259820641438275],[2010,0.025286164006426484],[2010,0.028366356873896416],[2010,0.032348268678984486],[2010,0.03674728217671331],[2010,0.041015988015106954],[2010,0.04487349370669785],[2010,0.04852251092708517],[2010,0.05264461890761224],[2010,0.05818975670596946],[2010,0.06608119739085475],[2010,0.0769755919241939],[2010,0.09114907908879508],[2010,0.10848762950952238],[2010,0.12851692118869196],[2010,0.15044167568198766],[2010,0.17323563364344466],[2010,0.1958532268729061],[2010,0.21757126967600873],[2010,0.23833869282238435],[2010,0.25890954620332357],[2010,0.28056027679570467],[2010,0.3043755006693405],[2010,0.33034798157546624],[2010,0.3567258261764503],[2010,0.3800154202831257],[2010,0.3957822230748736],[2010,0.4],[2010,0.3903958209817233],[2010,0.3672082108026149],[2010,0.3330513293795314],[2010,0.29200602101171413],[2010,0.2483951380025472],[2010,0.20576922763354866],[2010,0.1664278971979524],[2010,0.13148698645830467],[2010,0.10126365215232712],[2010,0.07569443807769319],[2010,0.05460000941286811],[2010,0.037761442249430115],[2010,0.024880872123430472],[2010,0.015526613637678426],[2010,0.009128245865788578],[2010,0.005032558515242981],[2010,0.00259146509173056],[2010,0.0012421403225312108],[2010,0.0005525900837982386],[2010,0.00022760446353943306],[2010,8.661984620626266e-05],[2010,3.040737412541487e-05],[2010,9.83244338400512e-06],[2010,2.9253046199830534e-06],[2010,8.000288105049082e-07],[2010,2.0097338994404968e-07],[2010,4.634527175012445e-08]]],"ys":[{"__ndarray__":"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","dtype":"float64","shape":[200]},{"__ndarray__":"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","dtype":"float64","shape":[200]},{"__ndarray__":"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","dtype":"float64","shape":[200]},{"__ndarray__":"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","dtype":"float64","shape":[200]},{"__ndarray__":"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","dtype":"float64","shape":[200]}]},"selected":{"id":"42615","type":"Selection"},"selection_policy":{"id":"42614","type":"UnionRenderers"}},"id":"42581","type":"ColumnDataSource"},{"attributes":{"text":"Sale Price by Year","text_color":{"value":"black"},"text_font_size":{"value":"12pt"}},"id":"42553","type":"Title"},{"attributes":{},"id":"42574","type":"ResetTool"},{"attributes":{"axis_label":"SalePrice","bounds":"auto","formatter":{"id":"42607","type":"BasicTickFormatter"},"major_label_orientation":"horizontal","ticker":{"id":"42566","type":"BasicTicker"}},"id":"42565","type":"LinearAxis"},{"attributes":{},"id":"42607","type":"BasicTickFormatter"},{"attributes":{"callback":null,"end":755000.0,"reset_end":755000.0,"reset_start":34900.0,"start":34900.0,"tags":[[["SalePrice","SalePrice",null]]]},"id":"42551","type":"Range1d"}],"root_ids":["42552"]},"title":"Bokeh Application","version":"1.4.0"}};
+  var render_items = [{"docid":"f3e793d7-8c23-468b-9560-8bfd418f08cd","roots":{"42552":"6c9dfdaf-0136-4ffd-9c2e-6411543c2a12"}}];
+  root.Bokeh.embed.embed_items_notebook(docs_json, render_items);
+
+  }
+  if (root.Bokeh !== undefined) {
+    embed_document(root);
+  } else {
+    var attempts = 0;
+    var timer = setInterval(function(root) {
+      if (root.Bokeh !== undefined) {
+        clearInterval(timer);
+        embed_document(root);
+      } else {
+        attempts++;
+        if (attempts > 100) {
+          clearInterval(timer);
+          console.log("Bokeh: ERROR: Unable to run BokehJS code because BokehJS library is missing");
+        }
+      }
+    }, 10, root)
+  }
+})(window);
+</script>
+</div>
