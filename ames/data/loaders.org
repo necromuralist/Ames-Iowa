@@ -7,6 +7,10 @@
 
 <<ames-imports>>
 
+
+<<load-environment>>
+
+
 <<load-raw>>
 #+end_src
 * Imports
@@ -26,12 +30,37 @@ import pandas
 #+begin_src python :noweb-ref ames-imports
 from ames.data.constants import RawData
 #+end_src
+* Load the Environment
+  I have an Environment Loader in graeae, but I'll keep everything in this repository for now.
+#+begin_src python :noweb-ref load-environment
+@attr.s(auto_attribs=True)
+class EnvironmentLoader:
+    """Loads the environment variable into a dictionary"""
+    _environment: dict=None
+
+    @property
+    def environment(self) -> dict:
+        """the environment variables"""
+        if self._environment is None:
+            load_dotenv(find_dotenv())
+            self._environment = os.environ
+        return self._environment
+
+    def __getitem__(self, variable: str) -> str:
+        """Get the value for the environment variable
+
+        Args:
+         variable: name of the environment variable to get
+        """
+        return self.environment.get(variable)
+#+end_src
 * Load Raw Data
 #+begin_src python :noweb-ref load-raw
 @attr.s(auto_attribs=True)
 class RawLoader:
+    """Loads the raw training data"""
     raw_data: object=RawData
-    _environnment: dict=None
+    _environment: EnvironmentLoader=None
     _path: Path=None
     _data: pandas.DataFrame=None
     _X: pandas.DataFrame = None
@@ -42,12 +71,11 @@ class RawLoader:
     _y_validate: pandas.DataFrame = None
 
     @property
-    def environment(self) -> dict:
-        """the environment variables"""
-        if self._environnment is None:
-            load_dotenv(find_dotenv())
-            self._environnment = os.environ
-        return self._environnment
+    def environment(self) -> EnvironmentLoader:
+        """The environment variables"""
+        if self._environment is None:
+            self._environment = EnvironmentLoader()
+        return self._environment
 
     @property
     def path(self) -> Path:

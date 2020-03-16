@@ -13,11 +13,8 @@
 #+END_COMMENT
 #+OPTIONS: ^:{}
 #+TOC: headlines 5
-#+PROPERTY: header-args :session /home/athena/.local/share/jupyter/runtime/kernel-b7763295-d635-4d63-992e-5a9e714ed656.json
+#+PROPERTY: header-args :session /home/brunhilde/.local/share/jupyter/runtime/kernel-b7f2196d-703b-4701-bfab-2188cff1f7ef.json
 * Beginning
-#+begin_quote
-In this exercise, you will leverage what you've learned to tune a machine learning model with **cross-validation**.
-#+end_quote
 ** Imports
 *** Python
 #+begin_src python :results none
@@ -64,7 +61,7 @@ TABLE = partial(tabulate, tablefmt="orgtbl", showindex=False, headers="keys")
 *** Plottting
 #+begin_src python :results none
 SLUG = "xgboost"
-OUTPUT_PATH = Path("../../files/posts/tutorials/")/SLUG
+OUTPUT_PATH = Path("../../notebooks/exploratory/")/SLUG
 if not OUTPUT_PATH.is_dir():
     OUTPUT_PATH.mkdir()
 Embed = partial(EmbedHoloviews, folder_path=OUTPUT_PATH)
@@ -145,6 +142,7 @@ X_test = pandas.get_dummies(X_test)
 X_train, X_validate = X_train.align(X_validate, join='left', axis=1)
 X_train, X_test = X_train.align(X_test, join='left', axis=1)
 #+end_src
+* Middle
 ** Step 1: Build model
 #+begin_quote
 In this step, you'll build and train your first model with gradient boosting.
@@ -212,15 +210,29 @@ print(search.best_params_)
 #+end_src
 
 #+RESULTS:
-: 2020-03-01 21:34:37,418 graeae.timers.timer start: Started: 2020-03-01 21:34:37.418449
-: 2020-03-01 21:36:24,107 graeae.timers.timer end: Ended: 2020-03-01 21:36:24.107671
-: 2020-03-01 21:36:24,109 graeae.timers.timer end: Elapsed: 0:01:46.689222
+: 2020-03-11 16:01:53,883 graeae.timers.timer start: Started: 2020-03-11 16:01:53.883907
+: 2020-03-11 16:02:34,179 graeae.timers.timer end: Ended: 2020-03-11 16:02:34.179786
+: 2020-03-11 16:02:34,182 graeae.timers.timer end: Elapsed: 0:00:40.295879
 : CV Training MAE: 16048.16
 : {'n_estimators': 160, 'max_depth': None}
 
-#+begin_src python :results output :exports both
-outcome = pandas.DataFrame({"Score": search.cv_results_["mean_test_score"]})
+#+begin_src python :results none
+outcome = -1 * pandas.DataFrame({"Score": search.cv_results_["mean_test_score"]})
+
+plot = outcome.hvplot.kde().opts(title="Cross Validation Scores", width=Plot.width, height=Plot.height)
+source = Embed(plot=plot, file_name="cross_validation_scores")()
 #+end_src
+
+#+begin_src python :results output html
+print(source)
+#+end_src
+
+#+RESULTS:
+#+begin_export html
+: <object type="text/html" data="cross_validation_scores.html" style="width:100%" height=800>
+:   <p>Figure Missing</p>
+: </object>
+#+end_export
 
 #+begin_src python :results output :exports both
 early_stopping_model = XGBRegressor(random_state=Data.random_seed,
@@ -263,11 +275,11 @@ print(f"MAE: {mean_absolute_error(model.predict(X_validate), y_validate)}")
 #+end_src
 
 #+RESULTS:
-: 2020-02-29 20:55:54,573 graeae.timers.timer start: Started: 2020-02-29 20:55:54.573008
-: {'n_estimators': 60, 'max_depth': 20, 'learning_rate': 0.7000000000000001}
-: 2020-02-29 20:55:55,019 graeae.timers.timer end: Ended: 2020-02-29 20:55:55.019335
-: 2020-02-29 20:55:55,020 graeae.timers.timer end: Elapsed: 0:00:00.446327
-: MAE: 25077.38005672089
+: 2020-03-11 16:02:44,418 graeae.timers.timer start: Started: 2020-03-11 16:02:44.418627
+: {'n_estimators': 140, 'max_depth': 70}
+: 2020-03-11 16:03:09,612 graeae.timers.timer end: Ended: 2020-03-11 16:03:09.612664
+: 2020-03-11 16:03:09,615 graeae.timers.timer end: Elapsed: 0:00:25.194037
+: MAE: 18997.002086900684
 ** Numeric Values Only
 #+begin_src python :results output :exports both
 imputer = IterativeImputer(random_state=Data.random_seed)
@@ -288,7 +300,7 @@ print(mean_absolute_error(early_stopping_model_2.predict(X_validate),
 : 16516.399373929795
 
 * End
-*** Make a Submission using the XGB early-stopping model
+** Make a Submission using the XGB early-stopping model
 
 #+begin_src python :results none
 predictions = early_stopping_model.predict(X_test)
@@ -299,7 +311,7 @@ output.to_csv(DATA_PATH/'submission.csv', index=False)
 
 This got a score of /14777.96266/ on the kaggle submissions page.
 
-*** Random Search CV
+** Random Search CV
 #+begin_src python :results none
 predictions = search.predict(X_test)
 output = pandas.DataFrame({'Id': X_test.index,
@@ -309,7 +321,7 @@ output.to_csv(DATA_PATH/'submission.csv', index=False)
 
 This one got a score of /14976.55345/, so the early stopping model is the best one so far... It had fewer trees than the model that the RandomSearch CV ended up with, maybe the Random Search overfit the data.
 
-*** Early Stopping with Imputation
+** Early Stopping with Imputation
 #+begin_src python :results none
 predictions = early_stopping_model_2.predict(X_test)
 output = pandas.DataFrame({'Id': X_test.index,
@@ -318,3 +330,24 @@ output.to_csv(DATA_PATH/'submission.csv', index=False)
 #+end_src
 
 This gets a score of /14965.20801/ so it looks like the XGBoost model without imputation is the best one.
+
+** SHAP
+#+begin_src python :results none
+explainer = shap.TreeExplainer(early_stopping_model)
+shap_values = explainer.shap_values(X_train)
+#+end_src
+
+#+begin_src python :results output :exports both
+shap.summary_plot(shap_values, X_train)
+figure = pyplot.gcf()
+output = "shap_summary.png"
+
+figure.savefig(OUTPUT_PATH/output)
+print(f"[[file:{output}]]")
+#+end_src
+
+#+RESULTS:
+
+ [[file:shap_summary.png]]
+
+So it looks like in our best model the top five features were =OverallQual=, =GrLvArea=, =TotalBsmtSF=, =GarageCars=, and =BsmtFinSF1=.

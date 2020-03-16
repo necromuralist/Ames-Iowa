@@ -1,0 +1,833 @@
+
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-1.4.0.min.js" type="text/javascript"></script>
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-widgets-1.4.0.min.js" type="text/javascript"></script>
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-tables-1.4.0.min.js" type="text/javascript"></script>
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-gl-1.4.0.min.js" type="text/javascript"></script>
+<script src="https://code.jquery.com/jquery-2.1.4.min.js" type="text/javascript"></script>
+<script src="https://code.jquery.com/ui/1.10.4/jquery-ui.min.js" type="text/javascript"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.1.20/require.min.js" type="text/javascript"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/underscore.js/1.8.3/underscore-min.js" type="text/javascript"></script>
+<script type="text/javascript">function HoloViewsWidget() {
+}
+
+HoloViewsWidget.prototype.init_slider = function(init_val){
+  if(this.load_json) {
+    this.from_json()
+  } else {
+    this.update_cache();
+  }
+}
+
+HoloViewsWidget.prototype.populate_cache = function(idx){
+  this.cache[idx].innerHTML = this.frames[idx];
+  if (this.embed) {
+    delete this.frames[idx];
+  }
+}
+
+HoloViewsWidget.prototype.process_error = function(msg){
+}
+
+HoloViewsWidget.prototype.from_json = function() {
+  var data_url = this.json_path + this.id + '.json';
+  $.getJSON(data_url, $.proxy(function(json_data) {
+    this.frames = json_data;
+    this.update_cache();
+    this.update(0);
+  }, this));
+}
+
+HoloViewsWidget.prototype.dynamic_update = function(current){
+  if (current === undefined) {
+    return
+  }
+  this.current = current;
+  if (this.comm) {
+    var msg = {comm_id: this.id+'_client', content: current}
+    this.comm.send(msg);
+  }
+}
+
+HoloViewsWidget.prototype.update_cache = function(force){
+  var frame_len = Object.keys(this.frames).length;
+  for (var i=0; i<frame_len; i++) {
+    if(!this.load_json || this.dynamic)  {
+      var frame = Object.keys(this.frames)[i];
+    } else {
+      var frame = i;
+    }
+    if(!(frame in this.cache) || force) {
+      if ((frame in this.cache) && force) { this.cache[frame].remove() }
+      var div = document.createElement("div");
+      var parent = document.getElementById("_anim_img"+this.id);
+      div.style.display = "none";
+      parent.appendChild(div)
+      this.cache[frame] = div;
+      var cache_id = "_anim_img"+this.id+"_"+frame;
+      this.populate_cache(frame);
+    }
+  }
+}
+
+HoloViewsWidget.prototype.update = function(current){
+  if(current in this.cache) {
+    for (var index in this.cache) {
+      this.cache[index].style.display = "none";
+    }
+    this.cache[current].style.display = "";
+    this.wait = false;
+  }
+}
+
+HoloViewsWidget.prototype.init_comms = function() {
+  var that = this
+  HoloViews.comm_manager.register_target(this.plot_id, this.id, function (msg) { that.msg_handler(msg) })
+  if (!this.cached || this.dynamic) {
+    function ack_callback(msg) {
+      var msg = msg.metadata;
+      var comm_id = msg.comm_id;
+      var comm_status = HoloViews.comm_status[comm_id];
+      if (that.queue.length > 0) {
+        that.time = Date.now();
+        that.dynamic_update(that.queue[that.queue.length-1]);
+        that.queue = [];
+      } else {
+        that.wait = false;
+      }
+      if ((msg.msg_type == "Ready") && msg.content) {
+        console.log("Python callback returned following output:", msg.content);
+      } else if (msg.msg_type == "Error") {
+        console.log("Python failed with the following traceback:", msg.traceback)
+      }
+    }
+    var comm = HoloViews.comm_manager.get_client_comm(this.plot_id, this.id+'_client', ack_callback);
+    return comm
+  }
+}
+
+HoloViewsWidget.prototype.msg_handler = function(msg) {
+  var metadata = msg.metadata;
+  if ((metadata.msg_type == "Ready")) {
+    if (metadata.content) {
+      console.log("Python callback returned following output:", metadata.content);
+    }
+	return;
+  } else if (metadata.msg_type == "Error") {
+    console.log("Python failed with the following traceback:", metadata.traceback)
+    return
+  }
+  this.process_msg(msg)
+}
+
+HoloViewsWidget.prototype.process_msg = function(msg) {
+}
+
+function SelectionWidget(frames, id, slider_ids, keyMap, dim_vals, notFound, load_json, mode, cached, json_path, dynamic, plot_id){
+  this.frames = frames;
+  this.id = id;
+  this.plot_id = plot_id;
+  this.slider_ids = slider_ids;
+  this.keyMap = keyMap
+  this.current_frame = 0;
+  this.current_vals = dim_vals;
+  this.load_json = load_json;
+  this.mode = mode;
+  this.notFound = notFound;
+  this.cached = cached;
+  this.dynamic = dynamic;
+  this.cache = {};
+  this.json_path = json_path;
+  this.init_slider(this.current_vals[0]);
+  this.queue = [];
+  this.wait = false;
+  if (!this.cached || this.dynamic) {
+    this.comm = this.init_comms();
+  }
+}
+
+SelectionWidget.prototype = new HoloViewsWidget;
+
+
+SelectionWidget.prototype.get_key = function(current_vals) {
+  var key = "(";
+  for (var i=0; i<this.slider_ids.length; i++)
+  {
+    var val = this.current_vals[i];
+    if (!(typeof val === 'string')) {
+      if (val % 1 === 0) { val = val.toFixed(1); }
+      else { val = val.toFixed(10); val = val.slice(0, val.length-1);}
+    }
+    key += "'" + val + "'";
+    if(i != this.slider_ids.length-1) { key += ', ';}
+    else if(this.slider_ids.length == 1) { key += ',';}
+  }
+  key += ")";
+  return this.keyMap[key];
+}
+
+SelectionWidget.prototype.set_frame = function(dim_val, dim_idx){
+  this.current_vals[dim_idx] = dim_val;
+  var key = this.current_vals;
+  if (!this.dynamic) {
+    key = this.get_key(key)
+  }
+  if (this.dynamic || !this.cached) {
+    if ((this.time !== undefined) && ((this.wait) && ((this.time + 10000) > Date.now()))) {
+      this.queue.push(key);
+      return
+    }
+    this.queue = [];
+    this.time = Date.now();
+    this.current_frame = key;
+    this.wait = true;
+    this.dynamic_update(key)
+  } else if (key !== undefined) {
+    this.update(key)
+  }
+}
+
+
+/* Define the ScrubberWidget class */
+function ScrubberWidget(frames, num_frames, id, interval, load_json, mode, cached, json_path, dynamic, plot_id){
+  this.slider_id = "_anim_slider" + id;
+  this.loop_select_id = "_anim_loop_select" + id;
+  this.id = id;
+  this.plot_id = plot_id;
+  this.interval = interval;
+  this.current_frame = 0;
+  this.direction = 0;
+  this.dynamic = dynamic;
+  this.timer = null;
+  this.load_json = load_json;
+  this.mode = mode;
+  this.cached = cached;
+  this.frames = frames;
+  this.cache = {};
+  this.length = num_frames;
+  this.json_path = json_path;
+  document.getElementById(this.slider_id).max = this.length - 1;
+  this.init_slider(0);
+  this.wait = false;
+  this.queue = [];
+  if (!this.cached || this.dynamic) {
+    this.comm = this.init_comms()
+  }
+}
+
+ScrubberWidget.prototype = new HoloViewsWidget;
+
+ScrubberWidget.prototype.set_frame = function(frame){
+  this.current_frame = frame;
+  var widget = document.getElementById(this.slider_id);
+  if (widget === null) {
+    this.pause_animation();
+    return
+  }
+  widget.value = this.current_frame;
+  if (this.dynamic || !this.cached) {
+    if ((this.time !== undefined) && ((this.wait) && ((this.time + 10000) > Date.now()))) {
+      this.queue.push(frame);
+      return
+    }
+    this.queue = [];
+    this.time = Date.now();
+    this.wait = true;
+    this.dynamic_update(frame)
+  } else {
+    this.update(frame)
+  }
+}
+
+ScrubberWidget.prototype.get_loop_state = function(){
+  var button_group = document[this.loop_select_id].state;
+  for (var i = 0; i < button_group.length; i++) {
+    var button = button_group[i];
+    if (button.checked) {
+      return button.value;
+    }
+  }
+  return undefined;
+}
+
+
+ScrubberWidget.prototype.next_frame = function() {
+  this.set_frame(Math.min(this.length - 1, this.current_frame + 1));
+}
+
+ScrubberWidget.prototype.previous_frame = function() {
+  this.set_frame(Math.max(0, this.current_frame - 1));
+}
+
+ScrubberWidget.prototype.first_frame = function() {
+  this.set_frame(0);
+}
+
+ScrubberWidget.prototype.last_frame = function() {
+  this.set_frame(this.length - 1);
+}
+
+ScrubberWidget.prototype.slower = function() {
+  this.interval /= 0.7;
+  if(this.direction > 0){this.play_animation();}
+  else if(this.direction < 0){this.reverse_animation();}
+}
+
+ScrubberWidget.prototype.faster = function() {
+  this.interval *= 0.7;
+  if(this.direction > 0){this.play_animation();}
+  else if(this.direction < 0){this.reverse_animation();}
+}
+
+ScrubberWidget.prototype.anim_step_forward = function() {
+  if(this.current_frame < this.length - 1){
+    this.next_frame();
+  }else{
+    var loop_state = this.get_loop_state();
+    if(loop_state == "loop"){
+      this.first_frame();
+    }else if(loop_state == "reflect"){
+      this.last_frame();
+      this.reverse_animation();
+    }else{
+      this.pause_animation();
+      this.last_frame();
+    }
+  }
+}
+
+ScrubberWidget.prototype.anim_step_reverse = function() {
+  if(this.current_frame > 0){
+    this.previous_frame();
+  } else {
+    var loop_state = this.get_loop_state();
+    if(loop_state == "loop"){
+      this.last_frame();
+    }else if(loop_state == "reflect"){
+      this.first_frame();
+      this.play_animation();
+    }else{
+      this.pause_animation();
+      this.first_frame();
+    }
+  }
+}
+
+ScrubberWidget.prototype.pause_animation = function() {
+  this.direction = 0;
+  if (this.timer){
+    clearInterval(this.timer);
+    this.timer = null;
+  }
+}
+
+ScrubberWidget.prototype.play_animation = function() {
+  this.pause_animation();
+  this.direction = 1;
+  var t = this;
+  if (!this.timer) this.timer = setInterval(function(){t.anim_step_forward();}, this.interval);
+}
+
+ScrubberWidget.prototype.reverse_animation = function() {
+  this.pause_animation();
+  this.direction = -1;
+  var t = this;
+  if (!this.timer) this.timer = setInterval(function(){t.anim_step_reverse();}, this.interval);
+}
+
+function extend(destination, source) {
+  for (var k in source) {
+    if (source.hasOwnProperty(k)) {
+      destination[k] = source[k];
+    }
+  }
+  return destination;
+}
+
+function update_widget(widget, values) {
+  if (widget.hasClass("ui-slider")) {
+    widget.slider('option', {
+      min: 0,
+      max: values.length-1,
+      dim_vals: values,
+      value: 0,
+      dim_labels: values
+    })
+    widget.slider('option', 'slide').call(widget, event, {value: 0})
+  } else {
+    widget.empty();
+    for (var i=0; i<values.length; i++){
+      widget.append($("<option>", {
+        value: i,
+        text: values[i]
+      }))
+    };
+    widget.data('values', values);
+    widget.data('value', 0);
+    widget.trigger("change");
+  };
+}
+
+function init_slider(id, plot_id, dim, values, next_vals, labels, dynamic, step, value, next_dim,
+                     dim_idx, delay, jQueryUI_CDN, UNDERSCORE_CDN) {
+  // Slider JS Block START
+  function loadcssfile(filename){
+    var fileref=document.createElement("link")
+    fileref.setAttribute("rel", "stylesheet")
+    fileref.setAttribute("type", "text/css")
+    fileref.setAttribute("href", filename)
+    document.getElementsByTagName("head")[0].appendChild(fileref)
+  }
+  loadcssfile("https://code.jquery.com/ui/1.10.4/themes/smoothness/jquery-ui.css");
+  /* Check if jQuery and jQueryUI have been loaded
+     otherwise load with require.js */
+  var jQuery = window.jQuery,
+    // check for old versions of jQuery
+    oldjQuery = jQuery && !!jQuery.fn.jquery.match(/^1\.[0-4](\.|$)/),
+    jquery_path = '',
+    paths = {},
+    noConflict;
+  var jQueryUI = jQuery.ui;
+  // check for jQuery
+  if (!jQuery || oldjQuery) {
+    // load if it's not available or doesn't meet min standards
+    paths.jQuery = jQuery;
+    noConflict = !!oldjQuery;
+  } else {
+    // register the current jQuery
+    define('jquery', [], function() { return jQuery; });
+  }
+  if (!jQueryUI) {
+    paths.jQueryUI = jQueryUI_CDN.slice(null, -3);
+  } else {
+    define('jQueryUI', [], function() { return jQuery.ui; });
+  }
+  paths.underscore = UNDERSCORE_CDN.slice(null, -3);
+  var jquery_require = {
+    paths: paths,
+    shim: {
+      "jQueryUI": {
+        exports:"$",
+        deps: ['jquery']
+      },
+      "underscore": {
+        exports: '_'
+      }
+    }
+  }
+  require.config(jquery_require);
+  require(["jQueryUI", "underscore"], function(jUI, _){
+    if (noConflict) $.noConflict(true);
+    var vals = values;
+    if (dynamic && vals.constructor === Array) {
+      var default_value = parseFloat(value);
+      var min = parseFloat(vals[0]);
+      var max = parseFloat(vals[vals.length-1]);
+      var wstep = step;
+      var wlabels = [default_value];
+      var init_label = default_value;
+    } else {
+      var min = 0;
+      if (dynamic) {
+        var max = Object.keys(vals).length - 1;
+        var init_label = labels[value];
+        var default_value = values[value];
+      } else {
+        var max = vals.length - 1;
+        var init_label = labels[value];
+        var default_value = value;
+      }
+      var wstep = 1;
+      var wlabels = labels;
+    }
+    function adjustFontSize(text) {
+      var width_ratio = (text.parent().width()/8)/text.val().length;
+      var size = Math.min(0.9, Math.max(0.6, width_ratio))+'em';
+      text.css('font-size', size);
+    }
+    var slider = $('#_anim_widget'+id+'_'+dim);
+    slider.slider({
+      animate: "fast",
+      min: min,
+      max: max,
+      step: wstep,
+      value: default_value,
+      dim_vals: vals,
+      dim_labels: wlabels,
+      next_vals: next_vals,
+      slide: function(event, ui) {
+        var vals = slider.slider("option", "dim_vals");
+        var next_vals = slider.slider("option", "next_vals");
+        var dlabels = slider.slider("option", "dim_labels");
+        if (dynamic) {
+          var dim_val = ui.value;
+          if (vals.constructor === Array) {
+            var label = ui.value;
+          } else {
+            var label = dlabels[ui.value];
+          }
+        } else {
+          var dim_val = vals[ui.value];
+          var label = dlabels[ui.value];
+        }
+        var text = $('#textInput'+id+'_'+dim);
+        text.val(label);
+        adjustFontSize(text);
+        HoloViews.index[plot_id].set_frame(dim_val, dim_idx);
+        if (Object.keys(next_vals).length > 0) {
+          var new_vals = next_vals[dim_val];
+          var next_widget = $('#_anim_widget'+id+'_'+next_dim);
+          update_widget(next_widget, new_vals);
+        }
+      }
+    });
+    slider.keypress(function(event) {
+      if (event.which == 80 || event.which == 112) {
+        var start = slider.slider("option", "value");
+        var stop =  slider.slider("option", "max");
+        for (var i=start; i<=stop; i++) {
+          var delay = i*delay;
+          $.proxy(function doSetTimeout(i) { setTimeout($.proxy(function() {
+            var val = {value:i};
+            slider.slider('value',i);
+            slider.slider("option", "slide")(null, val);
+          }, slider), delay);}, slider)(i);
+        }
+      }
+      if (event.which == 82 || event.which == 114) {
+        var start = slider.slider("option", "value");
+        var stop =  slider.slider("option", "min");
+        var count = 0;
+        for (var i=start; i>=stop; i--) {
+          var delay = count*delay;
+          count = count + 1;
+          $.proxy(function doSetTimeout(i) { setTimeout($.proxy(function() {
+            var val = {value:i};
+            slider.slider('value',i);
+            slider.slider("option", "slide")(null, val);
+          }, slider), delay);}, slider)(i);
+        }
+      }
+    });
+    var textInput = $('#textInput'+id+'_'+dim)
+    textInput.val(init_label);
+    adjustFontSize(textInput);
+  });
+}
+
+function init_dropdown(id, plot_id, dim, vals, value, next_vals, labels, next_dim, dim_idx, dynamic) {
+  var widget = $("#_anim_widget"+id+'_'+dim);
+  widget.data('values', vals)
+  for (var i=0; i<vals.length; i++){
+    if (dynamic) {
+      var val = vals[i];
+    } else {
+      var val = i;
+    }
+    widget.append($("<option>", {
+      value: val,
+      text: labels[i]
+    }));
+  };
+  widget.data("next_vals", next_vals);
+  widget.val(value);
+  widget.on('change', function(event, ui) {
+    if (dynamic) {
+      var dim_val = parseInt(this.value);
+    } else {
+      var dim_val = $.data(this, 'values')[this.value];
+    }
+    var next_vals = $.data(this, "next_vals");
+    if (Object.keys(next_vals).length > 0) {
+      var new_vals = next_vals[dim_val];
+      var next_widget = $('#_anim_widget'+id+'_'+next_dim);
+      update_widget(next_widget, new_vals);
+    }
+    var widgets = HoloViews.index[plot_id]
+    if (widgets) {
+      widgets.set_frame(dim_val, dim_idx);
+    }
+  });
+}
+
+
+if (window.HoloViews === undefined) {
+  window.HoloViews = {}
+  window.PyViz = window.HoloViews
+} else if (window.PyViz === undefined) {
+  window.PyViz = window.HoloViews
+}
+
+
+var _namespace = {
+  init_slider: init_slider,
+  init_dropdown: init_dropdown,
+  comms: {},
+  comm_status: {},
+  index: {},
+  plot_index: {},
+  kernels: {},
+  receivers: {}
+}
+
+for (var k in _namespace) {
+  if (!(k in window.HoloViews)) {
+    window.HoloViews[k] = _namespace[k];
+  }
+}
+
+// Define Bokeh specific subclasses
+function BokehSelectionWidget() {
+  SelectionWidget.apply(this, arguments);
+}
+
+function BokehScrubberWidget() {
+  ScrubberWidget.apply(this, arguments);
+}
+
+// Let them inherit from the baseclasses
+BokehSelectionWidget.prototype = Object.create(SelectionWidget.prototype);
+BokehScrubberWidget.prototype = Object.create(ScrubberWidget.prototype);
+
+// Define methods to override on widgets
+var BokehMethods = {
+  update_cache : function(){
+    for (var index in this.frames) {
+      this.frames[index] = JSON.parse(this.frames[index]);
+    }
+  },
+  update : function(current){
+    if (current === undefined) {
+      return;
+    }
+    var data = this.frames[current];
+    if (data !== undefined) {
+      if (data.root in HoloViews.plot_index) {
+        var doc = HoloViews.plot_index[data.root].model.document;
+      } else {
+        var doc = Bokeh.index[data.root].model.document;
+      }
+      doc.apply_json_patch(data.content);
+    }
+  },
+  init_comms: function() {
+    if (Bokeh.protocol !== undefined) {
+      this.receiver = new Bokeh.protocol.Receiver()
+    } else {
+      this.receiver = null;
+    }
+    return HoloViewsWidget.prototype.init_comms.call(this);
+  },
+  process_msg : function(msg) {
+    if (this.plot_id in HoloViews.plot_index) {
+      var doc = HoloViews.plot_index[this.plot_id].model.document;
+    } else {
+      var doc = Bokeh.index[this.plot_id].model.document;
+    }
+    if (this.receiver === null) { return }
+    var receiver = this.receiver;
+    if (msg.buffers.length > 0) {
+      receiver.consume(msg.buffers[0].buffer)
+    } else {
+      receiver.consume(msg.content.data)
+    }
+    const comm_msg = receiver.message;
+    if ((comm_msg != null) && (doc != null)) {
+      doc.apply_json_patch(comm_msg.content, comm_msg.buffers)
+    }
+  }
+}
+
+// Extend Bokeh widgets with backend specific methods
+extend(BokehSelectionWidget.prototype, BokehMethods);
+extend(BokehScrubberWidget.prototype, BokehMethods);
+
+window.HoloViews.BokehSelectionWidget = BokehSelectionWidget
+window.HoloViews.BokehScrubberWidget = BokehScrubberWidget
+</script>
+<script type="text/javascript">
+    function JupyterCommManager() {
+    }
+
+    JupyterCommManager.prototype.register_target = function(plot_id, comm_id, msg_handler) {
+      if (window.comm_manager || ((window.Jupyter !== undefined) && (Jupyter.notebook.kernel != null))) {
+        var comm_manager = window.comm_manager || Jupyter.notebook.kernel.comm_manager;
+        comm_manager.register_target(comm_id, function(comm) {
+          comm.on_msg(msg_handler);
+        });
+      } else if ((plot_id in window.PyViz.kernels) && (window.PyViz.kernels[plot_id])) {
+        window.PyViz.kernels[plot_id].registerCommTarget(comm_id, function(comm) {
+          comm.onMsg = msg_handler;
+        });
+      }
+    }
+
+    JupyterCommManager.prototype.get_client_comm = function(plot_id, comm_id, msg_handler) {
+      if (comm_id in window.PyViz.comms) {
+        return window.PyViz.comms[comm_id];
+      } else if (window.comm_manager || ((window.Jupyter !== undefined) && (Jupyter.notebook.kernel != null))) {
+        var comm_manager = window.comm_manager || Jupyter.notebook.kernel.comm_manager;
+        var comm = comm_manager.new_comm(comm_id, {}, {}, {}, comm_id);
+        if (msg_handler) {
+          comm.on_msg(msg_handler);
+        }
+      } else if ((plot_id in window.PyViz.kernels) && (window.PyViz.kernels[plot_id])) {
+        var comm = window.PyViz.kernels[plot_id].connectToComm(comm_id);
+        comm.open();
+        if (msg_handler) {
+          comm.onMsg = msg_handler;
+        }
+      }
+
+      window.PyViz.comms[comm_id] = comm;
+      return comm;
+    }
+
+    window.PyViz.comm_manager = new JupyterCommManager();
+    </script>
+
+<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/css/bootstrap.min.css">
+<link rel="stylesheet" href="https://code.jquery.com/ui/1.10.4/themes/smoothness/jquery-ui.css">
+<style>div.bk-hbox {
+    display: flex;
+    justify-content: center;
+}
+
+div.bk-hbox div.bk-plot {
+    padding: 8px;
+}
+
+div.bk-hbox div.bk-data-table {
+    padding: 20px;
+}
+
+div.hololayout {
+  display: flex;
+  align-items: center;
+  margin: 0;
+}
+
+div.holoframe {
+  width: 75%;
+}
+
+div.holowell {
+  display: flex;
+  align-items: center;
+}
+
+form.holoform {
+  background-color: #fafafa;
+  border-radius: 5px;
+  overflow: hidden;
+  padding-left: 0.8em;
+  padding-right: 0.8em;
+  padding-top: 0.4em;
+  padding-bottom: 0.4em;
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.05);
+  margin-bottom: 20px;
+  border: 1px solid #e3e3e3;
+}
+
+div.holowidgets {
+  padding-right: 0;
+  width: 25%;
+}
+
+div.holoslider {
+  min-height: 0 !important;
+  height: 0.8em;
+  width: 100%;
+}
+
+div.holoformgroup {
+  padding-top: 0.5em;
+  margin-bottom: 0.5em;
+}
+
+div.hologroup {
+  padding-left: 0;
+  padding-right: 0.8em;
+  width: 100%;
+}
+
+.holoselect {
+  width: 92%;
+  margin-left: 0;
+  margin-right: 0;
+}
+
+.holotext {
+  padding-left:  0.5em;
+  padding-right: 0;
+  width: 100%;
+}
+
+.holowidgets .ui-resizable-se {
+  visibility: hidden
+}
+
+.holoframe > .ui-resizable-se {
+  visibility: hidden
+}
+
+.holowidgets .ui-resizable-s {
+  visibility: hidden
+}
+
+
+/* CSS rules for noUISlider based slider used by JupyterLab extension  */
+
+.noUi-handle {
+  width: 20px !important;
+  height: 20px !important;
+  left: -5px !important;
+  top: -5px !important;
+}
+
+.noUi-handle:before, .noUi-handle:after {
+  visibility: hidden;
+  height: 0px;
+}
+
+.noUi-target {
+  margin-left: 0.5em;
+  margin-right: 0.5em;
+}
+</style><div style='display: table; margin: 0 auto;'>
+
+
+
+
+
+
+  <div class="bk-root" id="4d2c5834-8a2f-4672-9970-ce76d7c578c1" data-root-id="90418"></div>
+
+<script type="text/javascript">
+  (function(root) {
+  function embed_document(root) {
+    
+  var docs_json = {"5e793c1f-c1da-496a-a4b0-4c7ae4588820":{"roots":{"references":[{"attributes":{"align":null,"below":[{"id":"90427","type":"LinearAxis"}],"center":[{"id":"90431","type":"Grid"},{"id":"90436","type":"Grid"}],"left":[{"id":"90432","type":"LinearAxis"}],"margin":null,"min_border_bottom":10,"min_border_left":10,"min_border_right":10,"min_border_top":10,"plot_height":800,"plot_width":1000,"renderers":[{"id":"90455","type":"GlyphRenderer"}],"sizing_mode":"fixed","title":{"id":"90419","type":"Title"},"toolbar":{"id":"90442","type":"Toolbar"},"x_range":{"id":"90415","type":"Range1d"},"x_scale":{"id":"90423","type":"LinearScale"},"y_range":{"id":"90416","type":"Range1d"},"y_scale":{"id":"90425","type":"LinearScale"}},"id":"90418","subtype":"Figure","type":"Plot"},{"attributes":{"fill_alpha":{"value":0.2},"fill_color":{"value":"#1f77b3"},"line_alpha":{"value":0.2},"line_color":{"value":"#1f77b3"},"size":{"units":"screen","value":5.477225575051661},"x":{"field":"2ndFlrSF"},"y":{"field":"SalePrice"}},"id":"90454","type":"Scatter"},{"attributes":{},"id":"90437","type":"SaveTool"},{"attributes":{},"id":"90466","type":"UnionRenderers"},{"attributes":{"bottom_units":"screen","fill_alpha":{"value":0.5},"fill_color":{"value":"lightgrey"},"left_units":"screen","level":"overlay","line_alpha":{"value":1.0},"line_color":{"value":"black"},"line_dash":[4,4],"line_width":{"value":2},"render_mode":"css","right_units":"screen","top_units":"screen"},"id":"90468","type":"BoxAnnotation"},{"attributes":{},"id":"90423","type":"LinearScale"},{"attributes":{"fill_alpha":{"value":0.1},"fill_color":{"value":"#1f77b3"},"line_alpha":{"value":0.1},"line_color":{"value":"#1f77b3"},"size":{"units":"screen","value":5.477225575051661},"x":{"field":"2ndFlrSF"},"y":{"field":"SalePrice"}},"id":"90453","type":"Scatter"},{"attributes":{},"id":"90438","type":"PanTool"},{"attributes":{},"id":"90433","type":"BasicTicker"},{"attributes":{"grid_line_color":null,"ticker":{"id":"90428","type":"BasicTicker"}},"id":"90431","type":"Grid"},{"attributes":{},"id":"90441","type":"ResetTool"},{"attributes":{"source":{"id":"90449","type":"ColumnDataSource"}},"id":"90456","type":"CDSView"},{"attributes":{"callback":null,"data":{"2ndFlrSF":[854,0,866,756,1053,566,0,983,752,0,0,1142,0,0,0,0,0,0,0,0,1218,0,0,0,0,0,0,0,0,0,668,0,0,0,0,1320,0,0,0,0,0,0,0,0,0,0,631,0,716,0,676,0,0,0,0,0,756,860,1519,0,0,530,0,808,977,1330,0,0,0,983,0,0,833,0,765,462,0,213,0,548,960,0,0,0,670,1116,876,612,0,0,0,0,0,1031,881,790,0,0,0,0,0,755,0,0,592,939,0,0,520,0,639,656,1414,0,884,729,0,0,1523,728,0,351,0,0,0,0,0,0,688,0,941,1032,0,0,0,0,0,0,848,836,0,0,475,0,0,739,0,1151,0,448,0,0,896,0,0,524,0,1194,956,1070,0,1096,0,0,467,547,0,551,880,0,0,0,703,0,0,0,896,668,0,0,756,901,0,720,316,1518,0,704,0,0,1178,754,0,739,0,601,0,1360,929,0,0,0,445,0,564,0,0,0,882,0,0,0,920,0,703,0,0,518,817,0,0,1257,741,0,0,672,1306,504,0,0,0,1304,504,0,1100,504,0,730,0,689,0,0,551,591,888,0,1020,0,828,700,0,0,842,0,0,1286,864,0,829,0,0,1092,0,0,0,0,709,720,0,0,844,0,1106,0,0,596,0,0,0,866,807,0,0,0,0,625,649,0,0,698,840,780,568,795,0,0,648,975,702,0,0,1242,0,0,1818,0,1121,371,0,0,804,0,325,0,809,716,1200,871,1274,0,1347,1332,1177,0,1080,0,0,0,689,596,0,0,0,0,695,167,0,0,0,0,915,0,0,0,576,605,0,0,862,880,0,0,495,0,403,0,0,0,0,838,0,517,1427,504,784,672,0,0,0,0,711,468,0,0,1081,0,0,886,0,793,665,0,858,0,874,0,526,0,0,590,406,1157,0,0,299,0,0,936,0,438,0,0,0,1098,766,0,0,840,1101,1028,0,0,0,0,1017,0,728,1254,378,0,0,0,0,1160,0,682,0,0,0,0,504,110,600,678,0,834,384,0,0,512,0,0,445,0,975,0,0,930,596,504,0,0,868,804,0,0,720,0,833,224,1103,560,0,811,0,0,0,756,0,878,0,808,0,0,0,0,0,574,0,0,0,0,910,0,0,0,0,0,648,0,688,620,728,0,0,0,0,687,0,0,546,902,0,0,467,1000,846,0,689,0,0,0,0,0,0,0,741,1067,914,804,600,0,660,1538,1015,0,0,1237,0,0,0,611,0,0,707,527,844,0,0,0,0,1288,0,0,832,806,720,0,0,1182,0,0,0,0,1040,0,0,439,717,0,0,0,0,511,1129,806,1370,0,636,0,0,0,846,656,533,384,600,0,689,745,0,0,0,1254,584,0,0,0,0,0,812,568,0,0,0,0,684,0,0,840,846,595,988,600,0,800,0,896,1254,0,677,0,573,0,0,0,702,0,0,780,0,1066,0,756,778,0,0,0,1040,0,661,0,0,0,0,1440,0,576,0,0,0,872,704,840,0,0,0,0,788,0,843,755,807,713,0,567,0,651,546,0,793,762,0,0,0,482,915,0,0,0,738,672,0,0,0,586,679,0,0,0,0,672,0,0,644,900,887,551,0,0,0,1872,1281,0,472,0,0,0,0,0,0,0,1312,780,0,720,0,0,728,0,0,319,0,0,754,0,978,0,1093,0,0,0,0,473,0,0,0,0,0,0,0,0,878,0,0,888,0,900,0,864,664,0,0,0,0,1540,1276,1320,0,441,348,660,0,1060,0,729,902,714,744,1203,0,0,783,1097,0,0,734,767,0,1589,0,0,0,0,0,0,0,0,0,0,0,793,0,0,742,0,686,1128,0,1111,0,0,886,0,809,676,0,0,1174,787,1072,0,728,1088,0,0,0,504,0,1063,0,0,0,0,564,0,0,0,0,0,842,0,886,545,0,0,0,0,966,623,0,600,888,0,0,0,0,504,0,432,672,581,0,0,540,0,769,0,1051,761,0,0,728,0,0,0,0,779,0,1142,514,0,0,0,0,0,0,0,720,887,0,878,0,0,455,1426,0,762,0,0,0,530,785,795,0,0,0,521,0,0,252,765,0,0,0,813,0,1120,0,0,0,0,702,0,0,0,0,1037,0,742,1169,0,0,1001,612,546,0,0,1215,0,785,928,0,0,0,0,1140,880,0,1243,0,0,0,0,0,0,0,858,571,1196,0,1038,0,0,0,561,0,0,840,0,0,0,0,800,0,979,668,0,0,720,0,1330,744,0,1070,701,332,0,368,0,472,862,0,0,883,709,0,0,0,0,0,1336,0,1141,432,0,634,0,912,798,985,826,831,750,0,456,0,0,0,0,0,0,0,0,0,0,0,546,0,0,551,0,602,0,0,855,0,0,670,0,0,0,336,0,0,0,0,0,408,546,980,998,1168,0,0,0,0,1208,546,0,0,832,0,797,0,0,876,0,0,0,0,0,850,0,898,0,0,871,1054,895,0,0,915,0,0,954,772,813,1230,0,0,727,454,728,0,780,370,0,0,0,0,0,0,0,807,0,546,871,739,0,0,628,304,0,0,0,582,0,567,0,0,0,0,0,672,1122,0,1134,742,0,885,866,0,0,0,0,640,0,580,0,0,0,0,0,670,0,0,0,1112,0,653,0,1032,878,684,0,220,240,0,0,0,780,1362,0,252,534,0,704,539,650,0,0,0,0,918,0,0,0,0,933,601,0,0,0,0,0,0,712,872,1796,0,0,625,971,1175,743,0,406,523,0,1216,0,2065,0,0,272,685,0,829,776,0,677,630,0,689,728,984,875,0,0,0,913,464,0,0,0,0,0,0,0,790,672,0,0,0,0,584,0,240,546,0,0,678,0,702,0,1039,0,0,0,1259,0,0,0,940,892,862,1101,0,0,884,0,0,0,725,728,797,0,924,0,0,0,0,651,896,408,0,0,0,0,783,0,684,764,0,739,925,0,1479,650,192,0,0,0,589,992,660,0,903,430,0,0,0,912,748,587,0,0,0,850,0,672,994,832,0,0,0,0,950,0,978,741,1323,0,732,0,0,0,0,0,0,0,1357,1177,0,1020,0,0,0,0,0,0,862,0,0,0,0,0,1208,677,0,0,0,557,600,0,0,0,941,0,0,0,885,741,728,0,0,0,0,1215,1296,858,390,1185,873,698,0,0,804,0,1611,0,457,796,600,860,908,550,0,0,534,0,989,0,932,0,0,620,504,640,0,0,764,0,560,358,1392,862,0,349,0,0,0,691,0,1349,0,574,768,448,208,729,0,0,520,0,0,0,622,857,896,556,0,0,795,0,1044,1140,0,0,708,0,0,626,0,0,904,510,0,0,1104,0,0,830,0,0,0,0,0,685,748,0,981,0,0,0,0,870,550,0,896,0,0,0,0,694,0,1152,0,0],"A_2ndFlrSF":[854,0,866,756,1053,566,0,983,752,0,0,1142,0,0,0,0,0,0,0,0,1218,0,0,0,0,0,0,0,0,0,668,0,0,0,0,1320,0,0,0,0,0,0,0,0,0,0,631,0,716,0,676,0,0,0,0,0,756,860,1519,0,0,530,0,808,977,1330,0,0,0,983,0,0,833,0,765,462,0,213,0,548,960,0,0,0,670,1116,876,612,0,0,0,0,0,1031,881,790,0,0,0,0,0,755,0,0,592,939,0,0,520,0,639,656,1414,0,884,729,0,0,1523,728,0,351,0,0,0,0,0,0,688,0,941,1032,0,0,0,0,0,0,848,836,0,0,475,0,0,739,0,1151,0,448,0,0,896,0,0,524,0,1194,956,1070,0,1096,0,0,467,547,0,551,880,0,0,0,703,0,0,0,896,668,0,0,756,901,0,720,316,1518,0,704,0,0,1178,754,0,739,0,601,0,1360,929,0,0,0,445,0,564,0,0,0,882,0,0,0,920,0,703,0,0,518,817,0,0,1257,741,0,0,672,1306,504,0,0,0,1304,504,0,1100,504,0,730,0,689,0,0,551,591,888,0,1020,0,828,700,0,0,842,0,0,1286,864,0,829,0,0,1092,0,0,0,0,709,720,0,0,844,0,1106,0,0,596,0,0,0,866,807,0,0,0,0,625,649,0,0,698,840,780,568,795,0,0,648,975,702,0,0,1242,0,0,1818,0,1121,371,0,0,804,0,325,0,809,716,1200,871,1274,0,1347,1332,1177,0,1080,0,0,0,689,596,0,0,0,0,695,167,0,0,0,0,915,0,0,0,576,605,0,0,862,880,0,0,495,0,403,0,0,0,0,838,0,517,1427,504,784,672,0,0,0,0,711,468,0,0,1081,0,0,886,0,793,665,0,858,0,874,0,526,0,0,590,406,1157,0,0,299,0,0,936,0,438,0,0,0,1098,766,0,0,840,1101,1028,0,0,0,0,1017,0,728,1254,378,0,0,0,0,1160,0,682,0,0,0,0,504,110,600,678,0,834,384,0,0,512,0,0,445,0,975,0,0,930,596,504,0,0,868,804,0,0,720,0,833,224,1103,560,0,811,0,0,0,756,0,878,0,808,0,0,0,0,0,574,0,0,0,0,910,0,0,0,0,0,648,0,688,620,728,0,0,0,0,687,0,0,546,902,0,0,467,1000,846,0,689,0,0,0,0,0,0,0,741,1067,914,804,600,0,660,1538,1015,0,0,1237,0,0,0,611,0,0,707,527,844,0,0,0,0,1288,0,0,832,806,720,0,0,1182,0,0,0,0,1040,0,0,439,717,0,0,0,0,511,1129,806,1370,0,636,0,0,0,846,656,533,384,600,0,689,745,0,0,0,1254,584,0,0,0,0,0,812,568,0,0,0,0,684,0,0,840,846,595,988,600,0,800,0,896,1254,0,677,0,573,0,0,0,702,0,0,780,0,1066,0,756,778,0,0,0,1040,0,661,0,0,0,0,1440,0,576,0,0,0,872,704,840,0,0,0,0,788,0,843,755,807,713,0,567,0,651,546,0,793,762,0,0,0,482,915,0,0,0,738,672,0,0,0,586,679,0,0,0,0,672,0,0,644,900,887,551,0,0,0,1872,1281,0,472,0,0,0,0,0,0,0,1312,780,0,720,0,0,728,0,0,319,0,0,754,0,978,0,1093,0,0,0,0,473,0,0,0,0,0,0,0,0,878,0,0,888,0,900,0,864,664,0,0,0,0,1540,1276,1320,0,441,348,660,0,1060,0,729,902,714,744,1203,0,0,783,1097,0,0,734,767,0,1589,0,0,0,0,0,0,0,0,0,0,0,793,0,0,742,0,686,1128,0,1111,0,0,886,0,809,676,0,0,1174,787,1072,0,728,1088,0,0,0,504,0,1063,0,0,0,0,564,0,0,0,0,0,842,0,886,545,0,0,0,0,966,623,0,600,888,0,0,0,0,504,0,432,672,581,0,0,540,0,769,0,1051,761,0,0,728,0,0,0,0,779,0,1142,514,0,0,0,0,0,0,0,720,887,0,878,0,0,455,1426,0,762,0,0,0,530,785,795,0,0,0,521,0,0,252,765,0,0,0,813,0,1120,0,0,0,0,702,0,0,0,0,1037,0,742,1169,0,0,1001,612,546,0,0,1215,0,785,928,0,0,0,0,1140,880,0,1243,0,0,0,0,0,0,0,858,571,1196,0,1038,0,0,0,561,0,0,840,0,0,0,0,800,0,979,668,0,0,720,0,1330,744,0,1070,701,332,0,368,0,472,862,0,0,883,709,0,0,0,0,0,1336,0,1141,432,0,634,0,912,798,985,826,831,750,0,456,0,0,0,0,0,0,0,0,0,0,0,546,0,0,551,0,602,0,0,855,0,0,670,0,0,0,336,0,0,0,0,0,408,546,980,998,1168,0,0,0,0,1208,546,0,0,832,0,797,0,0,876,0,0,0,0,0,850,0,898,0,0,871,1054,895,0,0,915,0,0,954,772,813,1230,0,0,727,454,728,0,780,370,0,0,0,0,0,0,0,807,0,546,871,739,0,0,628,304,0,0,0,582,0,567,0,0,0,0,0,672,1122,0,1134,742,0,885,866,0,0,0,0,640,0,580,0,0,0,0,0,670,0,0,0,1112,0,653,0,1032,878,684,0,220,240,0,0,0,780,1362,0,252,534,0,704,539,650,0,0,0,0,918,0,0,0,0,933,601,0,0,0,0,0,0,712,872,1796,0,0,625,971,1175,743,0,406,523,0,1216,0,2065,0,0,272,685,0,829,776,0,677,630,0,689,728,984,875,0,0,0,913,464,0,0,0,0,0,0,0,790,672,0,0,0,0,584,0,240,546,0,0,678,0,702,0,1039,0,0,0,1259,0,0,0,940,892,862,1101,0,0,884,0,0,0,725,728,797,0,924,0,0,0,0,651,896,408,0,0,0,0,783,0,684,764,0,739,925,0,1479,650,192,0,0,0,589,992,660,0,903,430,0,0,0,912,748,587,0,0,0,850,0,672,994,832,0,0,0,0,950,0,978,741,1323,0,732,0,0,0,0,0,0,0,1357,1177,0,1020,0,0,0,0,0,0,862,0,0,0,0,0,1208,677,0,0,0,557,600,0,0,0,941,0,0,0,885,741,728,0,0,0,0,1215,1296,858,390,1185,873,698,0,0,804,0,1611,0,457,796,600,860,908,550,0,0,534,0,989,0,932,0,0,620,504,640,0,0,764,0,560,358,1392,862,0,349,0,0,0,691,0,1349,0,574,768,448,208,729,0,0,520,0,0,0,622,857,896,556,0,0,795,0,1044,1140,0,0,708,0,0,626,0,0,904,510,0,0,1104,0,0,830,0,0,0,0,0,685,748,0,981,0,0,0,0,870,550,0,896,0,0,0,0,694,0,1152,0,0],"SalePrice":[208500,181500,223500,140000,250000,143000,307000,200000,129900,118000,129500,345000,144000,279500,157000,132000,149000,90000,159000,139000,325300,139400,230000,129900,154000,256300,134800,306000,207500,68500,40000,149350,179900,165500,277500,309000,145000,153000,109000,82000,160000,170000,144000,130250,141000,319900,239686,249700,113000,127000,177000,114500,110000,385000,130000,180500,172500,196500,438780,124900,158000,101000,202500,140000,219500,317000,180000,226000,80000,225000,244000,129500,185000,144900,107400,91000,135750,127000,136500,110000,193500,153500,245000,126500,168500,260000,174000,164500,85000,123600,109900,98600,163500,133900,204750,185000,214000,94750,83000,128950,205000,178000,118964,198900,169500,250000,100000,115000,115000,190000,136900,180000,383970,217000,259500,176000,139000,155000,320000,163990,180000,100000,136000,153900,181000,84500,128000,87000,155000,150000,226000,244000,150750,220000,180000,174000,143000,171000,230000,231500,115000,260000,166000,204000,125000,130000,105000,222500,141000,115000,122000,372402,190000,235000,125000,79000,109500,269500,254900,320000,162500,412500,220000,103200,152000,127500,190000,325624,183500,228000,128500,215000,239000,163000,184000,243000,211000,172500,501837,100000,177000,200100,120000,200000,127000,475000,173000,135000,153337,286000,315000,184000,192000,130000,127000,148500,311872,235000,104000,274900,140000,171500,112000,149000,110000,180500,143900,141000,277000,145000,98000,186000,252678,156000,161750,134450,210000,107000,311500,167240,204900,200000,179900,97000,386250,112000,290000,106000,125000,192500,148000,403000,94500,128200,216500,89500,185500,194500,318000,113000,262500,110500,79000,120000,205000,241500,137000,140000,180000,277000,76500,235000,173000,158000,145000,230000,207500,220000,231500,97000,176000,276000,151000,130000,73000,175500,185000,179500,120500,148000,266000,241500,290000,139000,124500,205000,201000,141000,415298,192000,228500,185000,207500,244600,179200,164700,159000,88000,122000,153575,233230,135900,131000,235000,167000,142500,152000,239000,175000,158500,157000,267000,205000,149900,295000,305900,225000,89500,82500,360000,165600,132000,119900,375000,178000,188500,260000,270000,260000,187500,342643,354000,301000,126175,242000,87000,324000,145250,214500,78000,119000,139000,284000,207000,192000,228950,377426,214000,202500,155000,202900,82000,87500,266000,85000,140200,151500,157500,154000,437154,318061,190000,95000,105900,140000,177500,173000,134000,130000,280000,156000,145000,198500,118000,190000,147000,159000,165000,132000,162000,172400,134432,125000,123000,219500,61000,148000,340000,394432,179000,127000,187750,213500,76000,240000,192000,81000,125000,191000,426000,119000,215000,106500,100000,109000,129000,123000,169500,67000,241000,245500,164990,108000,258000,168000,150000,115000,177000,280000,339750,60000,145000,222000,115000,228000,181134,149500,239000,126000,142000,206300,215000,113000,315000,139000,135000,275000,109008,195400,175000,85400,79900,122500,181000,81000,212000,116000,119000,90350,110000,555000,118000,162900,172500,210000,127500,190000,199900,119500,120000,110000,280000,204000,210000,188000,175500,98000,256000,161000,110000,263435,155000,62383,188700,124000,178740,167000,146500,250000,187000,212000,190000,148000,440000,251000,132500,208900,380000,297000,89471,326000,374000,155000,164000,132500,147000,156000,175000,160000,86000,115000,133000,172785,155000,91300,34900,430000,184000,130000,120000,113000,226700,140000,289000,147000,124500,215000,208300,161000,124500,164900,202665,129900,134000,96500,402861,158000,265000,211000,234000,106250,150000,159000,184750,315750,176000,132000,446261,86000,200624,175000,128000,107500,39300,178000,107500,188000,111250,158000,272000,315000,248000,213250,133000,179665,229000,210000,129500,125000,263000,140000,112500,255500,108000,284000,113000,141000,108000,175000,234000,121500,170000,108000,185000,268000,128000,325000,214000,316600,135960,142600,120000,224500,170000,139000,118500,145000,164500,146000,131500,181900,253293,118500,325000,133000,369900,130000,137000,143000,79500,185900,451950,138000,140000,110000,319000,114504,194201,217500,151000,275000,141000,220000,151000,221000,205000,152000,225000,359100,118500,313000,148000,261500,147000,75500,137500,183200,105500,314813,305000,67000,240000,135000,168500,165150,160000,139900,153000,135000,168500,124000,209500,82500,139400,144000,200000,60000,93000,85000,264561,274000,226000,345000,152000,370878,143250,98300,155000,155000,84500,205950,108000,191000,135000,350000,88000,145500,149000,97500,167000,197900,402000,110000,137500,423000,230500,129000,193500,168000,137500,173500,103600,165000,257500,140000,148500,87000,109500,372500,128500,143000,159434,173000,285000,221000,207500,227875,148800,392000,194700,141000,755000,335000,108480,141500,176000,89000,123500,138500,196000,312500,140000,361919,140000,213000,55000,302000,254000,179540,109900,52000,102776,189000,129000,130500,165000,159500,157000,341000,128500,275000,143000,124500,135000,320000,120500,222000,194500,110000,103000,236500,187500,222500,131400,108000,163000,93500,239900,179000,190000,132000,142000,179000,175000,180000,299800,236000,265979,260400,98000,96500,162000,217000,275500,156000,172500,212000,158900,179400,290000,127500,100000,215200,337000,270000,264132,196500,160000,216837,538000,134900,102000,107000,114500,395000,162000,221500,142500,144000,135000,176000,175900,187100,165500,128000,161500,139000,233000,107900,187500,160200,146800,269790,225000,194500,171000,143500,110000,485000,175000,200000,109900,189000,582933,118000,227680,135500,223500,159950,106000,181000,144500,55993,157900,116000,224900,137000,271000,155000,224000,183000,93000,225000,139500,232600,385000,109500,189000,185000,147400,166000,151000,237000,167000,139950,128000,153500,100000,144000,130500,140000,157500,174900,141000,153900,171000,213000,133500,240000,187000,131500,215000,164000,158000,170000,127000,147000,174000,152000,250000,189950,131500,152000,132500,250580,148500,248900,129000,169000,236000,109500,200500,116000,133000,66500,303477,132250,350000,148000,136500,157000,187500,178000,118500,100000,328900,145000,135500,268000,149500,122900,172500,154500,165000,118858,140000,106500,142953,611657,135000,110000,153000,180000,240000,125500,128000,255000,250000,131000,174000,154300,143500,88000,145000,173733,75000,35311,135000,238000,176500,201000,145900,169990,193000,207500,175000,285000,176000,236500,222000,201000,117500,320000,190000,242000,79900,184900,253000,239799,244400,150900,214000,150000,143000,137500,124900,143000,270000,192500,197500,129000,119900,133900,172000,127500,145000,124000,132000,185000,155000,116500,272000,155000,239000,214900,178900,160000,135000,37900,140000,135000,173000,99500,182000,167500,165000,85500,199900,110000,139000,178400,336000,159895,255900,126000,125000,117000,395192,195000,197000,348000,168000,187000,173900,337500,121600,136500,185000,91000,206000,82000,86000,232000,136905,181000,149900,163500,88000,240000,102000,135000,100000,165000,85000,119200,227000,203000,187500,160000,213490,176000,194000,87000,191000,287000,112500,167500,293077,105000,118000,160000,197000,310000,230000,119750,84000,315500,287000,97000,80000,155000,173000,196000,262280,278000,139600,556581,145000,115000,84900,176485,200141,165000,144500,255000,180000,185850,248000,335000,220000,213500,81000,90000,110500,154000,328000,178000,167900,151400,135000,135000,154000,91500,159500,194000,219500,170000,138800,155900,126000,145000,133000,192000,160000,187500,147000,83500,252000,137500,197000,92900,160000,136500,146000,129000,176432,127000,170000,128000,157000,60000,119500,135000,159500,106000,325000,179900,274725,181000,280000,188000,205000,129900,134500,117000,318000,184100,130000,140000,133700,118400,212900,112000,118000,163900,115000,174000,259000,215000,140000,135000,93500,117500,239500,169000,102000,119000,94000,196000,144000,139000,197500,424870,80000,80000,149000,180000,174500,116900,143000,124000,149900,230000,120500,201800,218000,179900,230000,235128,185000,146000,224000,129000,108959,194000,233170,245350,173000,235000,625000,171000,163000,171900,200500,239000,285000,119500,115000,154900,93000,250000,392500,745000,120000,186700,104900,95000,262000,195000,189000,168000,174000,125000,165000,158000,176000,219210,144000,178000,148000,116050,197900,117000,213000,153500,271900,107000,200000,140000,290000,189000,164000,113000,145000,134500,125000,112000,229456,80500,91500,115000,134000,143000,137900,184000,145000,214000,147000,367294,127000,190000,132500,101800,142000,130000,138887,175500,195000,142500,265900,224900,248328,170000,465000,230000,178000,186500,169900,129500,119000,244000,171750,130000,294000,165400,127500,301500,99900,190000,151000,181000,128900,161500,180500,181000,183900,122000,378500,381000,144000,260000,185750,137000,177000,139000,137000,162000,197900,237000,68400,227000,180000,150500,139000,169000,132500,143000,190000,278000,281000,180500,119500,107500,162900,115000,138500,155000,140000,160000,154000,225000,177500,290000,232000,130000,325000,202500,138000,147000,179200,335000,203000,302000,333168,119000,206900,295493,208900,275000,111000,156500,72500,190000,82500,147000,55000,79000,130500,256000,176500,227000,132500,100000,125500,125000,167900,135000,52500,200000,128500,123000,155000,228500,177000,155835,108500,262500,283463,215000,122000,200000,171000,134900,410000,235000,170000,110000,149900,177500,315000,189000,260000,104900,156932,144152,216000,193000,127000,144000,232000,105000,165500,274300,466500,250000,239000,91000,117000,83000,167500,58500,237500,157000,112000,105000,125500,250000,136000,377500,131000,235000,124000,123000,163000,246578,281213,160000,137500,138000,137450,120000,193000,193879,282922,105000,275000,133000,112000,125500,215000,230000,140000,90000,257000,207000,175900,122500,340000,124000,223000,179900,127500,136500,274970,144000,142000,271000,140000,119000,182900,192140,143750,64500,186500,160000,174000,120500,394617,149700,197000,191000,149300,310000,121000,179600,129000,157900,240000,112000,92000,136000,287090,145000,84500,185000,175000,210000,266500,142125,147500]},"selected":{"id":"90450","type":"Selection"},"selection_policy":{"id":"90466","type":"UnionRenderers"}},"id":"90449","type":"ColumnDataSource"},{"attributes":{},"id":"90457","type":"BasicTickFormatter"},{"attributes":{"active_drag":"auto","active_inspect":"auto","active_multi":null,"active_scroll":"auto","active_tap":"auto","tools":[{"id":"90417","type":"HoverTool"},{"id":"90437","type":"SaveTool"},{"id":"90438","type":"PanTool"},{"id":"90439","type":"WheelZoomTool"},{"id":"90440","type":"BoxZoomTool"},{"id":"90441","type":"ResetTool"}]},"id":"90442","type":"Toolbar"},{"attributes":{},"id":"90450","type":"Selection"},{"attributes":{},"id":"90428","type":"BasicTicker"},{"attributes":{"overlay":{"id":"90468","type":"BoxAnnotation"}},"id":"90440","type":"BoxZoomTool"},{"attributes":{"data_source":{"id":"90449","type":"ColumnDataSource"},"glyph":{"id":"90452","type":"Scatter"},"hover_glyph":null,"muted_glyph":{"id":"90454","type":"Scatter"},"nonselection_glyph":{"id":"90453","type":"Scatter"},"selection_glyph":null,"view":{"id":"90456","type":"CDSView"}},"id":"90455","type":"GlyphRenderer"},{"attributes":{},"id":"90459","type":"BasicTickFormatter"},{"attributes":{},"id":"90439","type":"WheelZoomTool"},{"attributes":{"callback":null,"end":2065.0,"reset_end":2065.0,"reset_start":0.0,"tags":[[["2ndFlrSF","2ndFlrSF",null]]]},"id":"90415","type":"Range1d"},{"attributes":{"callback":null,"renderers":[{"id":"90455","type":"GlyphRenderer"}],"tags":["hv_created"],"tooltips":[["2ndFlrSF","@{A_2ndFlrSF}"],["SalePrice","@{SalePrice}"]]},"id":"90417","type":"HoverTool"},{"attributes":{"dimension":1,"grid_line_color":null,"ticker":{"id":"90433","type":"BasicTicker"}},"id":"90436","type":"Grid"},{"attributes":{},"id":"90425","type":"LinearScale"},{"attributes":{"callback":null,"end":755000.0,"reset_end":755000.0,"reset_start":34900.0,"start":34900.0,"tags":[[["SalePrice","SalePrice",null]]]},"id":"90416","type":"Range1d"},{"attributes":{"axis_label":"SalePrice","bounds":"auto","formatter":{"id":"90459","type":"BasicTickFormatter"},"major_label_orientation":"horizontal","ticker":{"id":"90433","type":"BasicTicker"}},"id":"90432","type":"LinearAxis"},{"attributes":{"fill_color":{"value":"#1f77b3"},"line_color":{"value":"#1f77b3"},"size":{"units":"screen","value":5.477225575051661},"x":{"field":"2ndFlrSF"},"y":{"field":"SalePrice"}},"id":"90452","type":"Scatter"},{"attributes":{"text":"second Floor Square Footage","text_color":{"value":"black"},"text_font_size":{"value":"12pt"}},"id":"90419","type":"Title"},{"attributes":{"axis_label":"2ndFlrSF","bounds":"auto","formatter":{"id":"90457","type":"BasicTickFormatter"},"major_label_orientation":"horizontal","ticker":{"id":"90428","type":"BasicTicker"}},"id":"90427","type":"LinearAxis"}],"root_ids":["90418"]},"title":"Bokeh Application","version":"1.4.0"}};
+  var render_items = [{"docid":"5e793c1f-c1da-496a-a4b0-4c7ae4588820","roots":{"90418":"4d2c5834-8a2f-4672-9970-ce76d7c578c1"}}];
+  root.Bokeh.embed.embed_items_notebook(docs_json, render_items);
+
+  }
+  if (root.Bokeh !== undefined) {
+    embed_document(root);
+  } else {
+    var attempts = 0;
+    var timer = setInterval(function(root) {
+      if (root.Bokeh !== undefined) {
+        clearInterval(timer);
+        embed_document(root);
+      } else {
+        attempts++;
+        if (attempts > 100) {
+          clearInterval(timer);
+          console.log("Bokeh: ERROR: Unable to run BokehJS code because BokehJS library is missing");
+        }
+      }
+    }, 10, root)
+  }
+})(window);
+</script>
+</div>
